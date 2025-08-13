@@ -18,6 +18,7 @@
         "socialiteproviders/telegram": "^4.1",
         "spatie/laravel-medialibrary": "^11.13",
         "spatie/laravel-permission": "^6.21",
+        "stripe/stripe-php": "^17.5",
         "telegram-bot/api": "^2.5"
     },
     "require-dev": {

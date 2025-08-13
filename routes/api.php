@@ -7,6 +7,14 @@ use App\Http\Controllers\Api\CategoryController;
 use App\Http\Controllers\Api\AddressController;
 use App\Http\Controllers\Api\BrandController;
 use App\Http\Controllers\Api\ProductController;
+use App\Http\Controllers\Api\OrderController;
+use App\Http\Controllers\Api\PaymentController;
+use App\Http\Controllers\Api\CartController;
+use App\Http\Controllers\Api\CouponController;
+use App\Http\Controllers\Api\NotificationController;
+use App\Http\Controllers\Api\TelegramNotificationController;
+use App\Http\Controllers\Api\ReviewController;
+
 
 // Public Route (accessible without login or authentication)
 // Category routes
@@ -17,6 +25,10 @@ Route::get('categories/{slug}', [CategoryController::class, 'show']);
 // Product routes
 Route::get('products', [ProductController::class, 'getAllProducts']);
 Route::get('products/{slug}', [ProductController::class, 'getProduct']);
+
+// Review routes
+Route::get('reviews', [ReviewController::class, 'index']);
+Route::get('reviews/{review}', [ReviewController::class, 'show']);
 
 Route::prefix('auth')->group(function () {
     // Auth routes
@@ -55,6 +67,16 @@ Route::middleware(['auth:sanctum', 'role:admin'])->group(function () {
     Route::post('products', [ProductController::class, 'createProduct']);
     Route::put('products/{slug}', [ProductController::class, 'updateProduct']);
     Route::delete('products/{slug}', [ProductController::class, 'deleteProduct']);
+
+    // Order routes
+    Route::put('orders/{order}', [OrderController::class, 'updateOrderStatus']);
+    Route::delete('orders/{order}', [OrderController::class, 'deleteOrder']);
+
+    // Coupon routes
+    Route::get('coupons', [CouponController::class, 'getAllCoupons']);
+    Route::post('coupons', [CouponController::class, 'createCoupon']);
+    Route::put('coupons/{code}', [CouponController::class, 'updateCoupon']);
+    Route::delete('coupons/{code}', [CouponController::class, 'deleteCoupon']);
 });
 
 // For authenticated customer
@@ -66,4 +88,47 @@ Route::middleware('auth:sanctum', 'role:customer')->group(function () {
     Route::put('/addresses/{address}', [AddressController::class, 'updateAddress']);
     Route::delete('/addresses/{address}', [AddressController::class, 'deleteAddress']);
     Route::post('/addresses/{address}/set-default', [AddressController::class, 'setDefaultAddress']);
+});
+
+// Routes that require any authenticated user (customer or admin)
+Route::middleware('auth:sanctum')->group(function () {
+    // Order routes accessible by authenticated users
+    Route::get('orders', [OrderController::class, 'getAllOrders']);
+    Route::get('orders/{order}', [OrderController::class, 'showOrder']);
+    Route::post('orders', [OrderController::class, 'createOrder']);
+
+    // Payment
+    Route::get('payments', [PaymentController::class, 'index']);
+    Route::post('payments', [PaymentController::class, 'store']);
+    Route::get('payments/{payment}', [PaymentController::class, 'show']);
+    Route::put('payments/{payment}', [PaymentController::class, 'update']);
+    Route::delete('payments/{payment}', [PaymentController::class, 'destroy']);
+
+    // Cart
+    Route::get('cart', [CartController::class, 'getCart']);
+    Route::post('cart/items', [CartController::class, 'addItem']);
+    Route::put('cart/items/{item}', [CartController::class, 'updateItem']);
+    Route::delete('cart/items/{item}', [CartController::class, 'removeItem']);
+    Route::post('cart/clear', [CartController::class, 'clearCart']);
+
+    // Coupon routes
+    Route::get('coupons/{code}', [CouponController::class, 'getCoupon']);
+
+    // Validate coupon
+    Route::post('coupons/validate', [CouponController::class, 'validateCoupon']);
+
+    // Notification routes
+    Route::get('/notifications', [NotificationController::class, 'index']);
+    Route::post('/notifications', [NotificationController::class, 'store']);
+    Route::patch('/notifications/{id}/read', [NotificationController::class, 'markAsRead']);
+
+    // Telegram notifications
+    Route::post('/telegram-notifications', [TelegramNotificationController::class, 'store']);
+    Route::post('/telegram-notifications/{id}/send', [TelegramNotificationController::class, 'send']);
+    Route::get('/telegram-notifications', [TelegramNotificationController::class, 'index']);
+
+    // Review routes
+    Route::post('reviews', [ReviewController::class, 'store']);
+    Route::put('reviews/{review}', [ReviewController::class, 'update']);
+    Route::delete('reviews/{review}', [ReviewController::class, 'destroy']);
 });
