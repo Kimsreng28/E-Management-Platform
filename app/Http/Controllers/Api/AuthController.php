@@ -10,6 +10,9 @@ use Laravel\Socialite\Facades\Socialite;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 use Carbon\Carbon;
+use Illuminate\Support\Str;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Hash;
 use SocialiteProviders\Manager\Config;
 use SocialiteProviders\Telegram\Provider as TelegramProvider;
 
@@ -219,7 +222,8 @@ class AuthController extends Controller
     public function googleCallback()
     {
         try {
-            $googleUser = Socialite::driver('google')->user();
+            $driver  = Socialite::driver('google');
+            $googleUser = $driver->stateless()->user();
 
             $user = User::firstOrCreate([
                 'email' => $googleUser->getEmail()
@@ -234,8 +238,8 @@ class AuthController extends Controller
 
             $token = $user->createToken('api_token')->plainTextToken;
 
-            $frontendUrl = 'http://localhost:3000?token=' . urlencode($token);
-
+            $locale = 'en'; // or detect dynamically
+            $frontendUrl = "http://localhost:3000/{$locale}/auth/callback?token=" . urlencode($token);
             return redirect($frontendUrl);
         } catch (\Exception $e) {
             return response()->json([
@@ -258,36 +262,121 @@ class AuthController extends Controller
         }
     }
 
-    // Telegram callback
-    public function telegramCallback()
+    public function telegramSpaLogin(Request $request)
     {
         try {
-            $telegramUser = Socialite::driver('telegram')->user();
+            // Get raw input
+            $input = $request->getContent();
+            if ($input) {
+                $input = json_decode($input, true);
+                if (json_last_error() !== JSON_ERROR_NONE) {
+                    throw new \Exception('Invalid JSON data: ' . json_last_error_msg());
+                }
+            } else {
+                $input = $request->all();
+            }
 
-            $user = User::firstOrCreate(
-                ['provider' => 'telegram', 'provider_id' => $telegramUser->getId()],
-                [
-                    'name' => $telegramUser->getName() ?? $telegramUser->getNickname(),
-                    'email' => $telegramUser->getEmail() ?? null,
-                    'avatar' => $telegramUser->getAvatar(),
-                    'role_id' => Role::where('name', 'customer')->first()->id,
-                    'is_verified' => true,
-                ]
-            );
+            Log::debug('Telegram Auth Data:', $input);
 
-            $token = $user->createToken('api_token')->plainTextToken;
+            if (empty($input)) {
+                throw new \Exception('No authentication data received');
+            }
+
+            // Required fields
+            $requiredFields = ['id', 'hash', 'auth_date'];
+            foreach ($requiredFields as $field) {
+                if (!isset($input[$field])) {
+                    throw new \Exception("Missing required field: $field");
+                }
+            }
+
+            // Verify Telegram hash
+            $this->verifyTelegramHash($input);
+
+            // Optional: check expiration (1 day)
+            if (time() - (int)$input['auth_date'] > 86400) {
+                throw new \Exception('Telegram auth data expired');
+            }
+
+            // Create or update user
+            $user = $this->findOrCreateUser($input);
+            $token = $user->createToken('telegram_token')->plainTextToken;
 
             return response()->json([
-                'message' => 'Telegram login successful',
-                'user' => $user,
+                'status' => 'success',
                 'token' => $token,
+                'user' => [
+                    'id' => $user->id,
+                    'name' => $user->name,
+                    'email' => $user->email,
+                    'avatar' => $user->avatar
+                ]
             ]);
+
         } catch (\Exception $e) {
-            return response()->json([
+            Log::error('Telegram Auth Failed:', [
                 'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-            ], 500);
+                'input' => $request->all()
+            ]);
+
+            return response()->json([
+                'status' => 'error',
+                'message' => $e->getMessage()
+            ], 400);
         }
     }
 
+    private function verifyTelegramHash(array $telegramUser): void
+    {
+        if (!isset($telegramUser['hash'])) {
+            throw new \Exception('Missing Telegram hash');
+        }
+
+        $checkHash = $telegramUser['hash'];
+        unset($telegramUser['hash']);
+
+        // Convert all values to strings
+        $telegramUser = array_map(fn($v) => (string)$v, $telegramUser);
+
+        // Sort keys by ASCII
+        ksort($telegramUser);
+
+        // Build data check string
+        $dataCheckString = implode("\n", array_map(
+            fn($k, $v) => $k . '=' . $v,
+            array_keys($telegramUser),
+            $telegramUser
+        ));
+
+        // Calculate HMAC
+        $botToken = config('services.telegram.client_secret');
+        $secretKey = hash('sha256', $botToken, true);
+        $hash = hash_hmac('sha256', $dataCheckString, $secretKey);
+
+        // Compare hashes
+        if (!hash_equals(strtolower($checkHash), strtolower($hash))) {
+            Log::debug('Telegram hash mismatch', [
+                'checkHash' => $checkHash,
+                'calculatedHash' => $hash,
+                'dataCheckString' => $dataCheckString
+            ]);
+            throw new \Exception('Invalid Telegram data hash');
+        }
+    }
+
+    private function findOrCreateUser(array $telegramUser): User
+    {
+        return User::updateOrCreate(
+            ['provider' => 'telegram', 'provider_id' => $telegramUser['id']],
+            [
+                'name' => $telegramUser['first_name'] ?? $telegramUser['username'] ?? 'Telegram User',
+                'email' => $telegramUser['email'] ?? ($telegramUser['id'] . '@telegram.user'),
+                'avatar' => $telegramUser['photo_url'] ?? null,
+                'password' => Hash::make(Str::random(16)),
+                'role_id' => Role::where('name', 'customer')->first()->id,
+                'is_verified' => true,
+                'last_login_at' => now(),
+            ]
+        );
+    }
 }

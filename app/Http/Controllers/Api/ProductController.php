@@ -39,8 +39,13 @@ class ProductController extends Controller
             'is_featured'       => 'boolean',
             'is_active'         => 'boolean',
             'specifications'    => 'nullable|array',
-            'images'            => 'nullable|array',
-            'videos'            => 'nullable|array',
+            'images'            => 'nullable|array|max:5',
+            'images.*'          => 'image|mimes:jpg,jpeg,png,webp|max:2048',
+            'videos'            => 'nullable|array|max:2',
+            'videos.*'          => 'file|mimes:mp4,avi,mov,webm|max:204800',
+        ],[
+            'images.max' => 'You can upload a maximum of 5 images per product.',
+            'videos.max' => 'You can upload a maximum of 5 videos per product.'
         ]);
 
         if ($validator->fails()) {
@@ -66,32 +71,39 @@ class ProductController extends Controller
         ]);
 
         // Save product images
-        if ($request->has('images')) {
-            foreach ($request->images as $index => $img) {
+        if ($request->hasFile('images')) {
+            foreach ($request->file('images') as $index => $file) {
+                $path = $file->store('products/images', 'public'); // saved in storage/app/public/products
+
                 ProductImage::create([
                     'product_id' => $product->id,
-                    'path'       => $img['path'],
-                    'alt_text'   => $img['alt_text'] ?? null,
-                    'order'      => $img['order'] ?? $index,
-                    'is_primary' => $img['is_primary'] ?? false,
+                    'path'       => 'storage/' . $path, // public path
+                    'alt_text'   => null,
+                    'order'      => $index,
+                    'is_primary' => $index === 0, // first image is primary
                 ]);
             }
         }
 
         // Save product videos
-        if ($request->has('videos')) {
-            foreach ($request->videos as $vid) {
+        if ($request->hasFile('videos')) {
+            foreach ($request->file('videos') as $index => $video) {
+                $path = $video->store('products/videos', 'public'); // saves in storage/app/public/products/videos
+
                 ProductVideo::create([
                     'product_id' => $product->id,
-                    'url'        => $vid['url'],
-                    'thumbnail'  => $vid['thumbnail'] ?? null,
-                    'title'      => $vid['title'] ?? null,
-                    'duration'   => $vid['duration'] ?? null,
+                    'url'        => '/storage/' . $path, // public URL
+                    'thumbnail'  => null, // you can generate a thumbnail later
+                    'title'      => $video->getClientOriginalName(),
+                    'duration'   => null // optional, can be extracted with FFmpeg
                 ]);
             }
         }
 
-        return response()->json(['message' => 'Product created successfully', 'product' => $product], 201);
+        return response()->json([
+            'message' => 'Product created successfully',
+            'product' => $product->load(['images', 'videos', 'category', 'brand'])
+        ], 201);
     }
 
     /**

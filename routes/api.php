@@ -46,7 +46,7 @@ Route::prefix('auth')->group(function () {
 
     // Telegram login
     Route::get('/telegram/redirect', [AuthController::class, 'telegramRedirect']);
-    Route::get('/telegram/callback', [AuthController::class, 'telegramCallback']);
+    Route::match(['get', 'post'], '/telegram/spa-login', [AuthController::class, 'telegramSpaLogin']);
 });
 
 
