@@ -17,6 +17,9 @@ use App\Http\Controllers\Api\ReviewController;
 
 
 // Public Route (accessible without login or authentication)
+
+// Product stats
+Route::get('products/stats', [ProductController::class, 'getProductStats']);
 // Category routes
 Route::get('categories', [CategoryController::class, 'index']);
 Route::get('categories/featured', [CategoryController::class, 'featured']);
@@ -48,7 +51,6 @@ Route::prefix('auth')->group(function () {
     Route::get('/telegram/redirect', [AuthController::class, 'telegramRedirect']);
     Route::match(['get', 'post'], '/telegram/spa-login', [AuthController::class, 'telegramSpaLogin']);
 });
-
 
 Route::middleware(['auth:sanctum', 'role:admin'])->group(function () {
     // Category routes

@@ -97,6 +97,16 @@ return [
             'retry_after' => 60,
         ],
 
+        // Custom user-based mailer (placeholder)
+        // 'user_smtp' => [
+        //     'transport' => 'smtp',
+        //     'host' => null,
+        //     'port' => 587,
+        //     'encryption' => 'tls',
+        //     'username' => null,
+        //     'password' => null,
+        // ],
+
     ],
 
     /*

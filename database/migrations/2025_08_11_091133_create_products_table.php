@@ -28,6 +28,8 @@ return new class extends Migration
             $table->boolean('is_active')->default(true);
             $table->json('specifications')->nullable();
             $table->foreignId('created_by')->constrained('users')->onDelete('set null');
+            $table->integer('low_stock_threshold')->default(10); // default alert at 10
+            $table->enum('stock_status', ['Active', 'Inactive', 'Out of Stock'])->default('Active');
             $table->timestamps();
             $table->softDeletes();
         });

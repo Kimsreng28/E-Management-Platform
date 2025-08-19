@@ -131,6 +131,12 @@ class AuthController extends Controller
 
         // Send OTP email
         try {
+            // Use Dynamically change the From address per user to send the OTP
+            // Mail::raw("Your OTP code for password reset is: $otp", function ($message) use ($validated) {
+            //     $message->from($validated['email'], 'Password Reset Service');
+            //     $message->to($validated['email']);
+            //     $message->subject('Password Reset OTP');
+            // });
             Mail::raw("Your OTP code for password reset is: $otp", function ($message) use ($validated) {
                 $message->to($validated['email']);
                 $message->subject('Password Reset OTP');

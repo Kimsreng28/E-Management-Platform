@@ -24,7 +24,9 @@ class Product extends Model
         'is_featured',
         'is_active',
         'specifications',
-        'created_by'
+        'created_by',
+        'low_stock_threshold',
+        'stock_status'
     ];
 
     protected $casts = [
@@ -76,5 +78,22 @@ class Product extends Model
     public function getAverageRatingAttribute()
     {
         return $this->reviews()->avg('rating') ?? 0;
+    }
+
+    // Auto calculate stock status
+    public function getStockStatusAttribute($value)
+    {
+        if ($this->stock <= 0) {
+            return 'Out of Stock';
+        } elseif ($this->stock <= $this->low_stock_threshold) {
+            return 'Inactive'; // OR "Low Stock" if you want a custom label
+        }
+        return 'Active';
+    }
+
+    // Check if product is in low stock
+    public function getIsLowStockAttribute()
+    {
+        return $this->stock > 0 && $this->stock <= $this->low_stock_threshold;
     }
 }

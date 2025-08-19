@@ -22,9 +22,10 @@ class BrandController
     public function createBrand(Request $request)
     {
         $validator = Validator::make($request->all(), [
-            'name' => 'required|string|max:255|unique:companies,name',
+            'name' => 'required|string|max:255|unique:brands,name',
             'description' => 'nullable|string',
             'logo' => 'nullable|string',
+            'logo_file' => 'nullable|image|mimes:jpeg,png,jpg,gif,svg|max:2048',
             'website' => 'nullable|string|max:255',
         ]);
 
@@ -33,6 +34,13 @@ class BrandController
         }
 
         $data = $validator->validated();
+
+        if ($request->hasFile('logo_file')) {
+            $file = $request->file('logo_file');
+            $path = $file->store('brands', 'public'); // stores in storage/app/public/brands
+            $data['logo'] = $path; // save path to DB
+        }
+
         $data['slug'] = Str::slug($data['name']);
 
         $brand = Brand::create($data);
@@ -60,9 +68,10 @@ class BrandController
         $company = Brand::where('slug', $slug)->firstOrFail();
 
         $validator = Validator::make($request->all(), [
-            'name' => 'sometimes|string|max:255|unique:companies,name,' . $company->id,
+            'name' => 'sometimes|string|max:255|unique:brands,name,' . $company->id,
             'description' => 'nullable|string',
             'logo' => 'nullable|string',
+            'logo_file' => 'nullable|image|mimes:jpeg,png,jpg,gif,svg|max:2048',
             'website' => 'nullable|string|max:255',
         ]);
 
@@ -72,8 +81,16 @@ class BrandController
 
         $data = $validator->validated();
 
-        if (isset($data['slug'])) {
-            $data['slug'] = Str::slug($data['slug']);
+        // Handle logo upload if a new file is provided
+        if ($request->hasFile('logo_file')) {
+            $file = $request->file('logo_file');
+            $path = $file->store('brands', 'public'); // stores in storage/app/public/brands
+            $data['logo'] = $path;
+        }
+
+        // Update slug if name changes
+        if (isset($data['name'])) {
+            $data['slug'] = Str::slug($data['name']);
         }
 
         $company->update($data);
