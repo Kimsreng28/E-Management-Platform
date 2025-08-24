@@ -14,10 +14,24 @@ class NotificationController extends Controller
     {
         $user = Auth::user();
 
-        $notifications = Notification::where('notifiable_id', $user->id)
-            ->where('notifiable_type', get_class($user))
-            ->orderBy('created_at', 'desc')
-            ->get();
+        // If admin → show all users' notifications
+        if ($user->role && $user->role->name === 'admin') {
+            $notifications = Notification::orderBy('created_at', 'desc')->get();
+        }
+        // If vendor → show only their notifications
+        elseif ($user->role && $user->role->name === 'customer') {
+            $notifications = Notification::where('notifiable_id', $user->id)
+                ->where('notifiable_type', get_class($user))
+                ->orderBy('created_at', 'desc')
+                ->get();
+        }
+        // If customer → show only their notifications
+        else {
+            $notifications = Notification::where('notifiable_id', $user->id)
+                ->where('notifiable_type', get_class($user))
+                ->orderBy('created_at', 'desc')
+                ->get();
+        }
 
         return response()->json($notifications);
     }
@@ -49,5 +63,14 @@ class NotificationController extends Controller
         ]);
 
         return response()->json($notification, 201);
+    }
+
+    // Delete a notification
+    public function destroy($id)
+    {
+        $notification = Notification::findOrFail($id);
+        $notification->forceDelete();
+
+        return response()->json(['message' => 'Notification deleted']);
     }
 }

@@ -7,6 +7,10 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Database\Eloquent\Relations\HasOne;
+use Illuminate\Database\Eloquent\Relations\MorphMany;
+use Illuminate\Support\Facades\Schema;
 
 class User extends Authenticatable
 {
@@ -27,6 +31,16 @@ class User extends Authenticatable
         'provider_id',
         'provider',
         'avatar',
+        'two_factor_enabled',
+        'two_factor_secret',
+        'two_factor_recovery_codes',
+        'is_active',
+    ];
+
+    protected $casts = [
+        'two_factor_enabled' => 'boolean',
+        'two_factor_recovery_codes' => 'array',
+        'is_active' => 'boolean',
     ];
 
     /**
@@ -76,4 +90,76 @@ class User extends Authenticatable
     {
         return $this->hasMany(Review::class);
     }
+
+    public function profile()
+    {
+        return $this->hasOne(UserProfile::class);
+    }
+
+    public function appearanceSetting()
+    {
+        return $this->hasOne(AppearanceSetting::class);
+    }
+
+   public function sessions()
+    {
+        return DB::table('sessions')
+            ->where('user_id', $this->id)
+            ->orderBy('last_activity', 'desc')
+            ->get()
+            ->map(function ($session) {
+                return (object) [
+                    'id' => $session->id,
+                    'ip_address' => $session->ip_address,
+                    'user_agent' => $session->user_agent,
+                    'last_activity' => $session->last_activity,
+                ];
+            });
+    }
+
+    public function activityLogs()
+    {
+        return $this->hasMany(UserActivityLog::class);
+    }
+
+    public function lastActivity()
+    {
+        return $this->hasOne(UserActivityLog::class)->latestOfMany();
+    }
+
+    public function notificationSettings()
+    {
+        return $this->hasOne(UserNotificationSetting::class);
+    }
+
+    public function notifications(): MorphMany
+    {
+        // matches your Notification model's morph
+        return $this->morphMany(Notification::class, 'notifiable');
+    }
+
+    /** Scope to admins (adjust to your schema) */
+    public function scopeAdmins($query)
+    {
+        // if (\Illuminate\Support\Facades\Schema::hasColumn('users', 'role')) {
+        //     return $query->where('role', 'admin');
+        // }
+
+        // if (\Illuminate\Support\Facades\Schema::hasColumn('users', 'is_admin')) {
+        //     return $query->where('is_admin', true);
+        // }
+
+        // Check which column exists in your users table
+        if (Schema::hasColumn('users', 'role')) {
+            return $query->where('role', 'admin');
+        } elseif (Schema::hasColumn('users', 'is_admin')) {
+            return $query->where('is_admin', true);
+        } elseif (Schema::hasColumn('users', 'role_id')) {
+            // If you have a role_id column, check for admin role ID
+            return $query->where('role_id', 1); // Adjust to your admin role ID
+        }
+
+        return $query->whereRaw('1 = 0');
+    }
+
 }

@@ -26,7 +26,8 @@ class Product extends Model
         'specifications',
         'created_by',
         'low_stock_threshold',
-        'stock_status'
+        'stock_status',
+        'discount',
     ];
 
     protected $casts = [
@@ -83,17 +84,40 @@ class Product extends Model
     // Auto calculate stock status
     public function getStockStatusAttribute($value)
     {
+        $threshold = $this->low_stock_threshold;
+
+        // fallback to business setting if product threshold is null
+        if ($threshold === null) {
+            $businessSettings = BusinessSetting::where('user_id', $this->created_by)->first();
+            $threshold = $businessSettings->low_stock_threshold ?? 10;
+        }
+
         if ($this->stock <= 0) {
             return 'Out of Stock';
-        } elseif ($this->stock <= $this->low_stock_threshold) {
-            return 'Inactive'; // OR "Low Stock" if you want a custom label
+        } elseif ($this->stock <= $threshold) {
+            return 'Inactive';
         }
+
         return 'Active';
     }
 
     // Check if product is in low stock
     public function getIsLowStockAttribute()
     {
-        return $this->stock > 0 && $this->stock <= $this->low_stock_threshold;
+        $threshold = $this->low_stock_threshold;
+        if ($threshold === null) {
+            $businessSettings = BusinessSetting::where('user_id', $this->created_by)->first();
+            $threshold = $businessSettings->low_stock_threshold ?? 10;
+        }
+
+        return $this->stock > 0 && $this->stock <= $threshold;
+    }
+
+    public function getDiscountedPriceAttribute()
+    {
+        if ($this->discount > 0) {
+            return round($this->price * (1 - $this->discount / 100), 2);
+        }
+        return $this->price;
     }
 }

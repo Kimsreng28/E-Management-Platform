@@ -14,12 +14,29 @@ use App\Http\Controllers\Api\CouponController;
 use App\Http\Controllers\Api\NotificationController;
 use App\Http\Controllers\Api\TelegramNotificationController;
 use App\Http\Controllers\Api\ReviewController;
+use App\Http\Controllers\Api\ProfileController;
+use App\Http\Controllers\Api\NotificationSettingsController;
+use App\Http\Controllers\Api\SecurityController;
+use App\Http\Controllers\Api\AppearanceSettingsController;
+use App\Http\Controllers\Api\BusinessSettingController;
+use App\Http\Controllers\Api\CustomerController;
+use App\Http\Controllers\Api\DashboardController;
+use App\Http\Controllers\Api\StockController;
+use App\Http\Controllers\Api\ReportController;
+use App\Http\Controllers\Api\SearchController;
 
 
 // Public Route (accessible without login or authentication)
 
 // Product stats
 Route::get('products/stats', [ProductController::class, 'getProductStats']);
+Route::get('orders/stats', [OrderController::class, 'getOrderStats']);
+Route::get('customers/stats', [CustomerController::class, 'statCustomer']);
+
+// Product QR
+Route::get('/products/{slug}/qr-code/{locale?}/{format?}', [ProductController::class, 'generateProductQrCode']);
+Route::get('/products/{slug}/qr-details', [ProductController::class, 'getProductQrDetails']);
+
 // Category routes
 Route::get('categories', [CategoryController::class, 'index']);
 Route::get('categories/featured', [CategoryController::class, 'featured']);
@@ -73,6 +90,7 @@ Route::middleware(['auth:sanctum', 'role:admin'])->group(function () {
     // Order routes
     Route::put('orders/{order}', [OrderController::class, 'updateOrderStatus']);
     Route::delete('orders/{order}', [OrderController::class, 'deleteOrder']);
+    Route::put('orders/{order}/update-addresses', [OrderController::class, 'updateOrderAddresses']);
 
     // Coupon routes
     Route::get('coupons', [CouponController::class, 'getAllCoupons']);
@@ -83,6 +101,11 @@ Route::middleware(['auth:sanctum', 'role:admin'])->group(function () {
 
 // For authenticated customer
 Route::middleware('auth:sanctum', 'role:customer')->group(function () {
+
+});
+
+// Routes that require any authenticated user (customer or admin)
+Route::middleware('auth:sanctum')->group(function () {
     // Address routes
     Route::get('/addresses', [AddressController::class, 'getAllUserAddresses']);
     Route::post('/addresses', [AddressController::class, 'createAddress']);
@@ -90,10 +113,13 @@ Route::middleware('auth:sanctum', 'role:customer')->group(function () {
     Route::put('/addresses/{address}', [AddressController::class, 'updateAddress']);
     Route::delete('/addresses/{address}', [AddressController::class, 'deleteAddress']);
     Route::post('/addresses/{address}/set-default', [AddressController::class, 'setDefaultAddress']);
-});
 
-// Routes that require any authenticated user (customer or admin)
-Route::middleware('auth:sanctum')->group(function () {
+    // Profile routes
+    Route::prefix('profile')->group(function () {
+        Route::get('/', [ProfileController::class, 'show']);
+        Route::post('/', [ProfileController::class, 'update']);
+    });
+
     // Order routes accessible by authenticated users
     Route::get('orders', [OrderController::class, 'getAllOrders']);
     Route::get('orders/{order}', [OrderController::class, 'showOrder']);
@@ -122,7 +148,11 @@ Route::middleware('auth:sanctum')->group(function () {
     // Notification routes
     Route::get('/notifications', [NotificationController::class, 'index']);
     Route::post('/notifications', [NotificationController::class, 'store']);
-    Route::patch('/notifications/{id}/read', [NotificationController::class, 'markAsRead']);
+    Route::post('/notifications/{id}/read', [NotificationController::class, 'markAsRead']);
+    Route::delete('/notifications/{id}', [NotificationController::class, 'destroy']);
+
+    Route::get('/notification-settings', [NotificationSettingsController::class, 'index']);
+    Route::post('/notification-settings', [NotificationSettingsController::class, 'store']);
 
     // Telegram notifications
     Route::post('/telegram-notifications', [TelegramNotificationController::class, 'store']);
@@ -133,4 +163,54 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('reviews', [ReviewController::class, 'store']);
     Route::put('reviews/{review}', [ReviewController::class, 'update']);
     Route::delete('reviews/{review}', [ReviewController::class, 'destroy']);
+
+    // Security
+    Route::prefix('security')->group(function () {
+        Route::post('/change-password', [SecurityController::class, 'changePassword']);
+        Route::post('/two-factor', [SecurityController::class, 'toggleTwoFactor']);
+        Route::get('/sessions', [SecurityController::class, 'getSessions']);
+        Route::delete('/sessions/{id}', [SecurityController::class, 'revokeSession']);
+    });
+
+    // Appearance settings
+    Route::get('/appearance-settings', [AppearanceSettingsController::class, 'index']);
+    Route::post('/appearance-settings', [AppearanceSettingsController::class, 'update']);
+
+    // Business Settings
+    Route::get('/business-settings', [BusinessSettingController::class, 'index']);
+    Route::post('/business-settings', [BusinessSettingController::class, 'store']);
+
+    // Customer
+    Route::get('/customers', [CustomerController::class, 'getAllCustomers']);
+    Route::get('/customers/{customer}', [CustomerController::class, 'getCustomer']);
+    Route::put('/customers/{customer}', [CustomerController::class, 'updateCustomer']);
+    Route::delete('/customers/{customer}', [CustomerController::class, 'deleteCustomer']);
+
+    //Dashboard
+    Route::get('/dashboard/stats', [DashboardController::class, 'stats']);
+    Route::get('/dashboard/recent-orders', [DashboardController::class, 'recentOrders']);
+    Route::get('/dashboard/low-stock', [DashboardController::class, 'lowStock']);
+    Route::post('/dashboard/restock', [DashboardController::class, 'restockProduct']);
+
+    //Stock
+    Route::prefix('stock')->group(function () {
+        Route::get('/', [StockController::class, 'index']);
+        Route::get('/low-stock', [StockController::class, 'lowStock']);
+        Route::put('/{id}', [StockController::class, 'updateStock']);
+        Route::post('/{id}/restock', [StockController::class, 'restock']);
+        Route::post('/bulk-update', [StockController::class, 'bulkUpdate']);
+    });
+
+    // Report
+    Route::prefix('reports')->group(function () {
+        Route::get('/sales-overview', [ReportController::class, 'salesOverview']);
+        Route::get('/sales', [ReportController::class, 'salesReport']);
+        Route::get('/products', [ReportController::class, 'productPerformance']);
+        Route::get('/inventory', [ReportController::class, 'inventoryReport']);
+        Route::get('/customers', [ReportController::class, 'customerAnalysis']);
+        Route::get('/export/{type}', [ReportController::class, 'exportReport']);
+    });
+
+    // Search Global
+    Route::get('/search', [SearchController::class, 'search']);
 });

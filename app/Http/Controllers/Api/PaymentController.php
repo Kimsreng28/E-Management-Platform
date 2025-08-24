@@ -8,14 +8,17 @@ use Stripe\Stripe;
 use Stripe\PaymentIntent;
 use App\Models\Order;
 use App\Models\Payment;
+use App\Services\NotificationService;
 
 class PaymentController
 {
     protected $khqrService;
+    protected NotificationService $notify;
 
-    public function __construct(KhqrService $khqrService)
+    public function __construct(KhqrService $khqrService, NotificationService $notify)
     {
         $this->khqrService = $khqrService;
+        $this->notify = $notify;
     }
 
     // Create payment record with Stripe or KHQR QR
@@ -30,12 +33,7 @@ class PaymentController
             'notes' => 'nullable|string',
         ]);
 
-        $user = $request->user();
         $order = Order::findOrFail($validated['order_id']);
-
-        if ($order->user_id !== $user->id && !$user->hasRole('admin')) {
-            return response()->json(['message' => 'Unauthorized'], 403);
-        }
 
         $paymentData = [
             'order_id' => $order->id,
@@ -61,6 +59,8 @@ class PaymentController
 
             $payment = Payment::create($paymentData);
 
+            $this->notify->notifyPaymentCreated($payment, $validated['currency']);
+
             return response()->json([
                 'success' => true,
                 'payment' => $payment,
@@ -80,6 +80,8 @@ class PaymentController
                 $qrPayload = $this->khqrService->generateValidKHQR($merchantName, $merchantAccount, $amount, $currency, $orderId);
 
                 $payment = Payment::create($paymentData);
+
+                $this->notify->notifyPaymentCreated($payment, $currency);
 
                 return response()->json([
                     'success' => true,
@@ -111,6 +113,8 @@ class PaymentController
     // Update specific payment
     public function update(Request $request, Payment $payment)
     {
+        $oldStatus = $payment->status;
+
         $validated = $request->validate([
             'payment_method' => 'sometimes|string',
             'amount' => 'sometimes|numeric|min:0',
@@ -121,6 +125,10 @@ class PaymentController
         ]);
 
         $payment->update($validated);
+
+        if (array_key_exists('status', $validated) && $validated['status'] !== $oldStatus) {
+            $this->notify->notifyPaymentStatusChanged($payment);
+        }
 
         return response()->json(['success' => true, 'payment' => $payment]);
     }

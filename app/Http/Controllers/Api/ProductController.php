@@ -10,9 +10,43 @@ use Illuminate\Routing\Controller;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Validator;
+use App\Models\BusinessSetting;
+use SimpleSoftwareIO\QrCode\Facades\QrCode;
 
 class ProductController extends Controller
 {
+    //Get Qr Code of Unique Product to show it detail
+    public function generateProductQrCode($slug, $locale = 'en')
+    {
+        $product = Product::with(['category', 'brand', 'images', 'videos'])
+            ->where('slug', $slug)
+            ->firstOrFail();
+
+        // Use passed locale
+        $productUrl = url("http://127.0.0.1:3000/{$locale}/dashboard/products/view/product/{$product->slug}");
+
+
+        $qrCode = QrCode::size(300)
+            ->format('svg')
+            ->generate($productUrl);
+
+        return response($qrCode)->header('Content-Type', 'image/svg+xml');
+    }
+
+    //Import Product
+    public function getProductQrDetails($slug)
+    {
+        $product = Product::with(['category', 'brand', 'images', 'videos'])
+            ->where('slug', $slug)
+            ->firstOrFail();
+
+        return response()->json([
+            'message' => 'Product details retrieved via QR code',
+            'product' => $product,
+            'qr_scan_url' => url()->current()
+        ]);
+    }
+
     //Get all products with category, brand, images, and videos
     public function getAllProducts(Request $request)
     {
@@ -72,6 +106,7 @@ class ProductController extends Controller
             'model_code'        => 'required|string|max:100|unique:products',
             'stock'             => 'required|integer|min:0',
             'price'             => 'required|numeric|min:0',
+            'discount'          => 'nullable|numeric|min:0|max:100',
             'cost_price'        => 'nullable|numeric|min:0',
             'short_description' => 'required|string',
             'description'       => 'required|string',
@@ -96,13 +131,19 @@ class ProductController extends Controller
             return response()->json($validator->errors(), 422);
         }
 
-        // Determine stock status
+        // Fetch business settings for current user
+        $businessSettings = BusinessSetting::where('user_id', Auth::id())->first();
+
+        // Determine low_stock_threshold (request overrides business setting)
+        $threshold = $request->low_stock_threshold
+                     ?? ($businessSettings->low_stock_threshold ?? 10);
+
         $stock = $request->stock;
-        $threshold = $request->low_stock_threshold ?? 10;
+
         if ($stock <= 0) {
             $stock_status = 'Out of Stock';
         } elseif ($stock <= $threshold) {
-            $stock_status = 'Inactive'; // Or "Low Stock"
+            $stock_status = 'Inactive';
         } else {
             $stock_status = 'Active';
         }
@@ -113,6 +154,7 @@ class ProductController extends Controller
             'slug'              => Str::slug($request->name) . '-' . uniqid(),
             'stock'             => $stock,
             'price'             => $request->price,
+            'discount'          => floatval($request->discount ?? 0),
             'cost_price'        => $request->cost_price,
             'short_description' => $request->short_description,
             'description'       => $request->description,
@@ -126,6 +168,10 @@ class ProductController extends Controller
             'low_stock_threshold' => $threshold,
             'stock_status'      => $stock_status,
         ]);
+
+        // Calculate discount price
+        $product->discount_price = round($product->price * (1 - ($product->discount / 100)), 2);
+        $product->save();
 
         // Save product images
         if ($request->hasFile('images')) {
@@ -169,6 +215,7 @@ class ProductController extends Controller
     public function getProduct($slug)
     {
         $product = Product::with(['category', 'brand', 'images', 'videos'])->where('slug', $slug)->firstOrFail();
+        $product->discount_price = round($product->price * (1 - ($product->discount / 100)), 2);
         return response()->json($product);
     }
 
@@ -191,6 +238,7 @@ class ProductController extends Controller
             'model_code'        => 'sometimes|string|max:100|unique:products,model_code,' . $product->id,
             'stock'             => 'sometimes|integer|min:0',
             'price'             => 'sometimes|numeric|min:0',
+            'discount'          => 'nullable|numeric|min:0|max:100',
             'cost_price'        => 'nullable|numeric|min:0',
             'short_description' => 'sometimes|string',
             'description'       => 'sometimes|string',
@@ -215,10 +263,12 @@ class ProductController extends Controller
             $data['slug'] = Str::slug($data['name']) . '-' . uniqid();
         }
 
-        // Recalculate stock status if stock or threshold changes
+        // Fetch business settings for threshold fallback
+        $businessSettings = BusinessSetting::where('user_id', Auth::id())->first();
+        $newThreshold = $data['low_stock_threshold'] ?? $product->low_stock_threshold ?? ($businessSettings->low_stock_threshold ?? 10);
         $newStock = $data['stock'] ?? $product->stock;
-        $newThreshold = $data['low_stock_threshold'] ?? $product->low_stock_threshold;
 
+        // Recalculate stock status
         if (isset($data['stock']) || isset($data['low_stock_threshold'])) {
             if ($newStock <= 0) {
                 $data['stock_status'] = 'Out of Stock';
@@ -227,9 +277,18 @@ class ProductController extends Controller
             } else {
                 $data['stock_status'] = 'Active';
             }
+            $data['low_stock_threshold'] = $newThreshold;
+        }
+
+        if (isset($data['discount'])) {
+            $data['discount'] = floatval($data['discount']);
         }
 
         $product->update($data);
+
+        // Update discount price
+        $product->discount_price = round($product->price * (1 - ($product->discount / 100)), 2);
+        $product->save();
 
         return response()->json([
             'message' => 'Product updated successfully',
