@@ -9,6 +9,8 @@ use App\Models\TelegramNotification;
 use Illuminate\Support\Facades\Http;
 use App\Models\Product;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Mail;
+
 
 class NotificationService
 {
@@ -29,6 +31,13 @@ class NotificationService
             ],
         ]);
 
+        // Buyer (Email)
+        $this->sendEmail(
+            $user->email,
+            'Order Confirmation',
+            "Your order {$order->order_number} has been placed successfully. Total: {$order->total}"
+        );
+
         // 2) Notify admins (DB)
         User::admins()->get()->each(function ($admin) use ($order) {
             $admin->notifications()->create([
@@ -41,15 +50,22 @@ class NotificationService
                     'total'   => (string)$order->total,
                 ],
             ]);
+
+            $this->sendEmail(
+                $admin->email,
+                'New Order Placed',
+                "Order {$order->order_number} was placed by user #{$order->user_id}. Total: {$order->total}"
+            );
         });
 
-        // 3) Optional: Telegram to buyer (if enabled)
+
+        // 4) Optional: Telegram to buyer (if enabled)
         $this->maybeSendTelegramForUser(
             $user,
             "📦 Order Placed: {$order->order_number}\nTotal: {$order->total}\nStatus: {$order->status}"
         );
 
-        // 4) Optional: Telegram to admins
+        // 5) Optional: Telegram to admins
         $this->maybeBroadcastTelegramToAdmins(
             "📦 New Order: {$order->order_number}\nUser ID: {$order->user_id}\nTotal: {$order->total}"
         );
@@ -74,6 +90,13 @@ class NotificationService
             ],
         ]);
 
+        // Buyer (Email)
+        $this->sendEmail(
+            $user->email,
+            'Payment Initiated',
+            "Your payment of {$payment->amount} {$currency} for order {$order->order_number} has been initiated."
+        );
+
         // 2) Admins (DB)
         User::admins()->get()->each(function ($admin) use ($payment, $order, $currency) {
             $admin->notifications()->create([
@@ -86,15 +109,21 @@ class NotificationService
                     'status'     => $payment->status,
                 ],
             ]);
+
+            $this->sendEmail(
+                $admin->email,
+                'Payment Initiated',
+                "Payment {$payment->amount} {$currency} for order {$order->order_number} ({$payment->payment_method}) has been initiated."
+            );
         });
 
-        // 3) Telegram to buyer
+        // 4) Telegram to buyer
         $this->maybeSendTelegramForUser(
             $user,
             "💳 Payment Initiated\nOrder: {$order->order_number}\nAmount: {$payment->amount} {$currency}\nMethod: {$payment->payment_method}"
         );
 
-        // 4) Telegram to admins
+        // 5) Telegram to admins
         $this->maybeBroadcastTelegramToAdmins(
             "💳 Payment Initiated\nOrder: {$order->order_number}\nAmount: {$payment->amount} {$currency}\nMethod: {$payment->payment_method}"
         );
@@ -118,6 +147,12 @@ class NotificationService
             ],
         ]);
 
+        $this->sendEmail(
+            $user->email,
+            'Payment Status Updated',
+            "Your payment for order {$order->order_number} is now {$payment->status}."
+        );
+
         // Admins (DB)
         User::admins()->get()->each(function ($admin) use ($payment, $order) {
             $admin->notifications()->create([
@@ -130,7 +165,14 @@ class NotificationService
                     'status'     => $payment->status,
                 ],
             ]);
+
+            $this->sendEmail(
+                $admin->email,
+                'Payment Status Updated',
+                "Payment status for order {$order->order_number} changed to {$payment->status}."
+            );
         });
+
 
         // Telegram
         $this->maybeSendTelegramForUser(
@@ -207,6 +249,13 @@ class NotificationService
                 ],
             ]);
 
+            // Email
+            $this->sendEmail(
+                $admin->email,
+                $title,
+                $message
+            );
+
             // Send Telegram notification if enabled
             $settings = $admin->notificationSettings;
             if ($settings && $settings->telegram && !empty($settings->telegram_chat_id)) {
@@ -215,6 +264,16 @@ class NotificationService
         }
     }
 
+    protected function sendEmail(string $to, string $subject, string $body): void
+    {
+        try {
+            Mail::raw($body, function ($message) use ($to, $subject) {
+                $message->to($to)->subject($subject);
+            });
+        } catch (\Exception $e) {
+            Log::error("Failed to send email: " . $e->getMessage());
+        }
+    }
 
     /** Low-level Telegram sender + DB record */
     protected function sendTelegram(string $chatId, string $message, ?int $orderId = null): void
