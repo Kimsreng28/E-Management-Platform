@@ -11,6 +11,25 @@ use Illuminate\Support\Str;
 
 class CategoryController extends Controller
 {
+    // Get stats
+    public function stats()
+    {
+        $totalProducts = \App\Models\Product::count();
+        $totalCategories = \App\Models\Category::count();
+        $totalBrands = \App\Models\Brand::count(); // assuming you have a Brand model
+        $support = "24/7"; // static for now
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'totalProducts' => $totalProducts,
+                'totalCategories' => $totalCategories,
+                'totalBrands' => $totalBrands,
+                'support' => $support,
+            ]
+        ]);
+    }
+
     // Display a listing of categories.
     public function index(Request $request)
     {
@@ -55,6 +74,7 @@ class CategoryController extends Controller
                 'image' => $category->image,
                 'parent_id' => $category->parent_id,
                 'parent_name' => $category->parent ? $category->parent->name : null,
+                "products_count" => $category->products()->count(),
                 'order' => $category->order,
                 'is_featured' => $category->is_featured,
                 'created_at' => $category->created_at,
@@ -232,6 +252,48 @@ class CategoryController extends Controller
         return response()->json([
             'success' => true,
             'data' => $categories
+        ]);
+    }
+
+    // Get product by category
+    public function products($slug, Request $request)
+    {
+        $category = Category::where('slug', $slug)->first();
+
+        if (!$category) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Category not found'
+            ], 404);
+        }
+
+        $query = $category->products()->with('brand', 'images', 'videos');
+
+        // Optional: search filter
+        if ($request->has('search') && !empty($request->search)) {
+            $search = $request->search;
+            $query->where('name', 'like', "%{$search}%")
+                ->orWhere('description', 'like', "%{$search}%");
+        }
+
+        // Sorting (default newest first)
+        $sortField = $request->get('sortField', 'created_at');
+        $sortDirection = $request->get('sortDirection', 'desc');
+        $query->orderBy($sortField, $sortDirection);
+
+        // Pagination
+        $perPage = (int) $request->get('perPage', 10);
+        $products = $query->paginate($perPage);
+
+        return response()->json([
+            'success' => true,
+            'data' => $products->items(),
+            'pagination' => [
+                'total' => $products->total(),
+                'perPage' => $products->perPage(),
+                'currentPage' => $products->currentPage(),
+                'lastPage' => $products->lastPage(),
+            ]
         ]);
     }
 }

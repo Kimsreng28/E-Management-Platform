@@ -7,14 +7,14 @@ class KhqrService
     public function generateValidKHQR($merchantName, $merchantAccount, $amount, $currency, $orderId)
     {
         // Data sanitization
-        $merchantName = $this->cleanText($merchantName, 25); // Max length 25
-        $merchantAccount = $this->cleanAccount($merchantAccount); // Allow alphanumeric and special characters @ and + for Bakong IDs
-        $amount = number_format($amount, 2, '.', ''); // Allow only 2 decimal places or fix it to 2 decimal places
+        $merchantName = $this->cleanText($merchantName, 25); // Allow Khmer, letters, numbers, spaces, dot, dash
+        $merchantAccount = $this->cleanAccount($merchantAccount); // Allow alphanumeric, @ and +
+        $amount = number_format($amount, 2, '.', ''); // 2 decimal places
 
-        // Currrency conversion to ISO 4217 numeric code
+        // Currency conversion to ISO 4217 numeric code
         $currencyNumeric = match (strtoupper($currency)) {
-            'USD' => '840', // US Dollar
-            'KHR', 'KHM' => '116', // Riel (Khmer Riel)
+            'USD' => '840',
+            'KHR', 'KHM' => '116',
             default => throw new \Exception("Unsupported currency: $currency"),
         };
 
@@ -36,41 +36,39 @@ class KhqrService
             ]
         ];
 
-        // Build TLV
+        // Build TLV (byte-safe)
         $tlvWithoutCRC = $this->buildTLV($payload);
-        $tlvWithCRCField = $tlvWithoutCRC . '6304'; // Add tag before calculating CRC
+        $tlvWithCRCField = $tlvWithoutCRC . '6304'; // CRC tag before calculating CRC
         $crc = $this->calculateCRC16($tlvWithCRCField);
 
         return $tlvWithCRCField . strtoupper(str_pad(dechex($crc), 4, '0', STR_PAD_LEFT));
     }
 
-
+    // Allow letters (Latin + Khmer), numbers, spaces, dot, dash
     private function cleanText($text, $maxLength)
     {
-        // Remove all special characters and spaces
-        $cleaned = preg_replace('/[^A-Za-z0-9]/', '', $text);
-        return substr($cleaned, 0, $maxLength);
+        $cleaned = preg_replace('/[^\p{L}\p{N}\s\.\-]/u', '', $text);
+        return mb_substr($cleaned, 0, $maxLength);
     }
 
+    // Allow alphanumeric, @, +
     private function cleanAccount($account)
     {
         return preg_replace('/[^A-Za-z0-9@+]/', '', $account);
     }
 
-    // Builds a TLV (Tag-Length-Value) string from the provided data, the payload use EMVCo's TLV format for structured data transmission
+    // Builds a TLV string with byte-length counting
     private function buildTLV($data)
     {
         $tlv = '';
 
         foreach ($data as $tag => $value) {
             if (is_array($value)) {
-                // Nested TLV structure (e.g., for merchant account info)
                 $nestedValue = $this->buildTLV($value);
-                $length = strlen($nestedValue);
+                $length = mb_strlen($nestedValue, '8bit'); // byte length
                 $tlv .= $tag . str_pad($length, 2, '0', STR_PAD_LEFT) . $nestedValue;
             } else {
-                // Simple field - ensure correct length indicator
-                $length = strlen($value);
+                $length = mb_strlen($value, '8bit'); // byte length
                 $tlv .= $tag . str_pad($length, 2, '0', STR_PAD_LEFT) . $value;
             }
         }
@@ -78,10 +76,9 @@ class KhqrService
         return $tlv;
     }
 
-    // Calculates CRC16 for the provided data, that ensures data integrity during qr code scanning
+    // EMVCo CRC16 calculation
     private function calculateCRC16($data)
     {
-        // Initialize value
         $crc = 0xFFFF;
 
         for ($i = 0; $i < strlen($data); $i++) {
@@ -92,6 +89,6 @@ class KhqrService
             }
         }
 
-        return $crc & 0xFFFF; // Ensure CRC is 16 bits result
+        return $crc & 0xFFFF;
     }
 }

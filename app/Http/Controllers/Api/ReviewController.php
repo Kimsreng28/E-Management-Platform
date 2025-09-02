@@ -17,6 +17,10 @@ class ReviewController extends Controller
             $query->where('is_approved', filter_var($request->is_approved, FILTER_VALIDATE_BOOLEAN));
         }
 
+        if ($request->has('product_id')) {
+            $query->where('product_id', $request->product_id);
+        }
+
         $reviews = $query->paginate(15);
 
         return response()->json($reviews);
@@ -74,5 +78,16 @@ class ReviewController extends Controller
         $review->forceDelete();
 
         return response()->json(['success' => true, 'message' => 'Review deleted']);
+    }
+
+    public function getByProduct(Request $request, $productId)
+    {
+        $query = Review::with(['user'])
+            ->where('product_id', $productId)
+            ->where('is_approved', true);
+
+        $reviews = $query->get();
+
+        return response()->json($reviews);
     }
 }

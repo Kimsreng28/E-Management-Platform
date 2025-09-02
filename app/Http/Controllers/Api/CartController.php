@@ -19,7 +19,7 @@ class CartController extends Controller
             ['session_id' => null]
         );
 
-        $cart->load('items.product');
+        $cart->load('items.product.images');
 
         return response()->json($cart);
     }

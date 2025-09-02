@@ -15,6 +15,9 @@ use SimpleSoftwareIO\QrCode\Facades\QrCode;
 
 class ProductController extends Controller
 {
+    // Days to consider a product as new
+    private $newProductDays = 14;
+
     //Get Qr Code of Unique Product to show it detail
     public function generateProductQrCode($slug, $locale = 'en')
     {
@@ -22,9 +25,11 @@ class ProductController extends Controller
             ->where('slug', $slug)
             ->firstOrFail();
 
-        // Use passed locale
-        $productUrl = url("http://127.0.0.1:3000/{$locale}/dashboard/products/view/product/{$product->slug}");
+        // base url
+        $baseUrl = env('NEXT_PUBLIC_FRONTEND_URL');
 
+        // Construct product URL dynamically
+        $productUrl = "{$baseUrl}/{$locale}/customer/products/{$product->slug}";
 
         $qrCode = QrCode::size(300)
             ->format('svg')
@@ -72,6 +77,16 @@ class ProductController extends Controller
             $query->where('category_id', $request->category_id);
         }
 
+        // Filter by featured
+        if ($request->filled('is_featured')) {
+            $query->where('is_featured', $request->is_featured);
+        }
+
+        // Filter by is_new
+        if ($request->filled('is_new')) {
+            $query->where('created_at', '>=', now()->subDays($this->newProductDays));
+        }
+
         // Sorting
         $sortBy = $request->get('sort_by', 'created_at'); // default sort column
         $sortOrder = $request->get('sort_order', 'desc'); // default order
@@ -84,9 +99,22 @@ class ProductController extends Controller
         $perPage = $request->get('per_page', 10); // default 10 per page
         $products = $query->paginate($perPage);
 
+        // discount_price and is_new
+        $products->getCollection()->transform(function ($product) {
+            $product->discount = $product->discount ? (int) round($product->discount) : 0;
+            $product->discount_price = round($product->price * (1 - ($product->discount / 100)), 2);
+            $product->is_new = $product->created_at >= now()->subDays($this->newProductDays);
+
+            // Rating info
+            $avg = $product->reviews()->avg('rating') ?? 0;
+            $product->average_rating = round((float) $avg, 1);
+            $product->total_ratings = $product->totalRatings();
+
+            return $product;
+        });
+
         return response()->json($products);
     }
-
 
     /**
      * Create a new product
@@ -154,7 +182,7 @@ class ProductController extends Controller
             'slug'              => Str::slug($request->name) . '-' . uniqid(),
             'stock'             => $stock,
             'price'             => $request->price,
-            'discount'          => floatval($request->discount ?? 0),
+            'discount'          => $request->discount ? (int) round($request->discount) : 0,
             'cost_price'        => $request->cost_price,
             'short_description' => $request->short_description,
             'description'       => $request->description,
@@ -203,6 +231,8 @@ class ProductController extends Controller
             }
         }
 
+        $product->is_new = $product->created_at >= now()->subDays($this->newProductDays);
+
         return response()->json([
             'message' => 'Product created successfully',
             'product' => $product->load(['images', 'videos', 'category', 'brand'])
@@ -214,8 +244,16 @@ class ProductController extends Controller
      */
     public function getProduct($slug)
     {
-        $product = Product::with(['category', 'brand', 'images', 'videos'])->where('slug', $slug)->firstOrFail();
+        $product = Product::with(['category', 'brand', 'images', 'videos', 'orders.shippingAddress'])->where('slug', $slug)->firstOrFail();
         $product->discount_price = round($product->price * (1 - ($product->discount / 100)), 2);
+        $product->is_new = $product->created_at >= now()->subDays($this->newProductDays);
+
+        // rating info
+        // Rating info
+            $avg = $product->reviews()->avg('rating') ?? 0;
+            $product->average_rating = round((float) $avg, 1);
+            $product->total_ratings = $product->totalRatings();
+
         return response()->json($product);
     }
 
@@ -288,6 +326,7 @@ class ProductController extends Controller
 
         // Update discount price
         $product->discount_price = round($product->price * (1 - ($product->discount / 100)), 2);
+        $product->is_new = $product->created_at >= now()->subDays($this->newProductDays);
         $product->save();
 
         return response()->json([
@@ -326,5 +365,24 @@ class ProductController extends Controller
                 'message' => $e->getMessage()
             ], 500);
         }
+    }
+
+    public function getByCategory(Request $request, $categoryId)
+    {
+        $query = Product::with(['category', 'brand', 'images'])
+            ->where('category_id', $categoryId)
+            ->where('is_active', true);
+
+        if ($request->has('exclude')) {
+            $query->where('id', '!=', $request->exclude);
+        }
+
+        if ($request->has('limit')) {
+            $query->limit($request->limit);
+        }
+
+        $products = $query->get();
+
+        return response()->json($products);
     }
 }

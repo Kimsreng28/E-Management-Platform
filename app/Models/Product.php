@@ -33,8 +33,9 @@ class Product extends Model
     protected $casts = [
         'is_featured' => 'boolean',
         'is_active' => 'boolean',
-        'specifications' => 'array'
+        'specifications' => 'array',
     ];
+
 
     public function category()
     {
@@ -61,24 +62,45 @@ class Product extends Model
         return $this->hasMany(OrderItem::class);
     }
 
+    public function orders()
+{
+    return $this->belongsToMany(Order::class, 'order_items')
+        ->withPivot(['quantity', 'unit_price', 'total_price']);
+}
+
+    public function wishlists()
+    {
+        return $this->hasMany(Wishlist::class);
+    }
+
+    // Product reviews
     public function reviews()
     {
         return $this->hasMany(Review::class);
     }
 
+    public function totalRatings()
+    {
+        return $this->reviews()->count();
+    }
+
+    // Product creator
     public function creator()
     {
         return $this->belongsTo(User::class, 'created_by');
     }
 
+    // Product main image
     public function getMainImageAttribute()
     {
         return $this->images->where('is_primary', true)->first() ?? $this->images->first();
     }
 
+    // Product average rating
     public function getAverageRatingAttribute()
     {
-        return $this->reviews()->avg('rating') ?? 0;
+        $avg = $this->reviews()->avg('rating') ?? 0;
+        return round((float) $avg, 1);
     }
 
     // Auto calculate stock status
@@ -113,6 +135,7 @@ class Product extends Model
         return $this->stock > 0 && $this->stock <= $threshold;
     }
 
+    // Get discounted price
     public function getDiscountedPriceAttribute()
     {
         if ($this->discount > 0) {

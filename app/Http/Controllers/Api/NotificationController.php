@@ -6,6 +6,7 @@ use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\Auth;
 use App\Models\Notification;
+use App\Events\NotificationCreated;
 
 class NotificationController extends Controller
 {
@@ -14,11 +15,11 @@ class NotificationController extends Controller
     {
         $user = Auth::user();
 
-        // If admin → show all users' notifications
+        // If admin show all users' notifications
         if ($user->role && $user->role->name === 'admin') {
             $notifications = Notification::orderBy('created_at', 'desc')->get();
         }
-        // If vendor → show only their notifications
+        // If vendor show only their notifications
         elseif ($user->role && $user->role->name === 'customer') {
             $notifications = Notification::where('notifiable_id', $user->id)
                 ->where('notifiable_type', get_class($user))
@@ -61,6 +62,8 @@ class NotificationController extends Controller
             'notifiable_id' => $user->id,
             'notifiable_type' => get_class($user),
         ]);
+
+        event(new NotificationCreated($notification));
 
         return response()->json($notification, 201);
     }

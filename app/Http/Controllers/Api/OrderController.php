@@ -9,6 +9,8 @@ use Illuminate\Support\Facades\Auth;
 use App\Services\NotificationService;
 use App\Models\BusinessSetting;
 use App\Models\Coupon;
+use App\Models\Product;
+use Barryvdh\DomPDF\Facade\Pdf;
 
 class OrderController
 {
@@ -18,6 +20,78 @@ class OrderController
     {
         $this->notify = $notify;
     }
+
+    // Preview order
+    public function previewOrder(Request $request)
+    {
+        $validated = $request->validate([
+            'items' => 'required|array|min:1',
+            'items.*.product_id' => 'required|exists:products,id',
+            'items.*.quantity' => 'required|integer|min:1',
+            'coupon_code' => 'nullable|string',
+        ]);
+
+        $settings = BusinessSetting::where('user_id', Auth::id())->first();
+
+        $taxRate = $settings->tax_rate ?? 0.1; // fallback to 10%
+
+        $shippingCost = $settings->default_shipping_cost ?? 5.00;
+
+        $subtotal = 0;
+        $totalProductDiscount = 0; // Track discount from products
+        $itemsPreview = [];
+
+        foreach ($validated['items'] as $item) {
+            $product = Product::findOrFail($item['product_id']);
+
+            $discount = $product->discount ?? 0; // 0% if no discount
+            $discountPrice = round($product->price * (1 - ($discount / 100)), 2);
+
+            $totalPriceWithoutDiscount = $product->price * $item['quantity'];
+            $totalPriceWithDiscount = $discountPrice * $item['quantity'];
+
+            $subtotal += $totalPriceWithDiscount;
+            $totalProductDiscount += $totalPriceWithoutDiscount - $totalPriceWithDiscount;
+
+            $itemsPreview[] = [
+                'product_id' => $product->id,
+                'name' => $product->name,
+                'unit_price' => $product->price,
+                'discount' => $discount,
+                'discount_price' => $discountPrice,
+                'quantity' => $item['quantity'],
+                'total_price' => $totalPriceWithDiscount,
+            ];
+        }
+
+        // Coupon discount
+        $couponDiscount = 0.0;
+        if (!empty($validated['coupon_code'])) {
+            $coupon = Coupon::where('code', $validated['coupon_code'])->first();
+            if ($coupon && $coupon->isValid()) {
+                if ($coupon->type === 'fixed') {
+                    $couponDiscount = $coupon->value;
+                } elseif ($coupon->type === 'percentage') {
+                    $couponDiscount = $subtotal * ($coupon->value / 100);
+                }
+            }
+        }
+
+        $taxAmount = $subtotal * ($taxRate / 100);
+        $total = $subtotal + $taxAmount + $shippingCost - $couponDiscount;
+        if ($total < 0) $total = 0;
+
+        return response()->json([
+            'items' => $itemsPreview,
+            'subtotal' => round($subtotal, 2),
+            'shipping_cost' => round($shippingCost, 2),
+            'tax_amount' => round($taxAmount, 2),
+            'product_discount' => round($totalProductDiscount, 2),
+            'coupon_discount' => round($couponDiscount, 2),
+            'total' => round($total, 2),
+        ]);
+    }
+
 
     // List orders for the authenticated user and admin
     public function getAllOrders(Request $request)
@@ -69,7 +143,6 @@ class OrderController
 
         return response()->json($orders);
     }
-
 
     // Create a new order with items
     public function createOrder(Request $request)
@@ -255,5 +328,28 @@ class OrderController
                 'completed' => Order::where('status', 'completed')->count(),
             ];
         return response()->json($stats);
+    }
+
+    // Download invoice
+    public function downloadInvoice(Order $order, Request $request, $type = 'download')
+    {
+        try {
+            $pdf = \PDF::loadView('invoices.template', compact('order'));
+
+            $headers = [
+                'Content-Type'              => 'application/pdf',
+                'Content-Disposition'       => "attachment; filename=invoice-{$order->id}.pdf",
+                'Access-Control-Allow-Origin' => 'http://127.0.0.1:3000', // your frontend
+                'Access-Control-Allow-Methods' => 'GET, OPTIONS',
+                'Access-Control-Allow-Headers' => 'Authorization, Content-Type',
+                'Access-Control-Expose-Headers' => 'Content-Disposition',
+            ];
+
+            return response($pdf->output(), 200, $headers);
+
+        } catch (\Exception $e) {
+            \Log::error('Invoice generation error: ' . $e->getMessage());
+            return response()->json(['error' => 'Failed to generate invoice'], 500);
+        }
     }
 }

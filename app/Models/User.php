@@ -101,6 +101,16 @@ class User extends Authenticatable
         return $this->hasOne(AppearanceSetting::class);
     }
 
+    public function wishlists()
+    {
+        return $this->hasMany(Wishlist::class);
+    }
+
+    public function wishlistProducts()
+    {
+        return $this->belongsToMany(Product::class, 'wishlists');
+    }
+
    public function sessions()
     {
         return DB::table('sessions')
@@ -162,4 +172,25 @@ class User extends Authenticatable
         return $query->whereRaw('1 = 0');
     }
 
+    public function conversations(): BelongsToMany
+    {
+        return $this->belongsToMany(Conversation::class, 'participants')
+            ->withPivot('last_read')
+            ->withTimestamps();
+    }
+
+    public function messages(): HasMany
+    {
+        return $this->hasMany(Message::class);
+    }
+
+    public function isDelivery(): bool
+    {
+        return $this->role_id === 3; // Assuming delivery role ID is 3
+    }
+
+    public function isCustomer(): bool
+    {
+        return $this->role_id === 2; // Customer role ID is 2
+    }
 }

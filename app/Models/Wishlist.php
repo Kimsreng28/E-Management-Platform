@@ -5,21 +5,13 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
-class Review extends Model
+class Wishlist extends Model
 {
     use SoftDeletes;
 
     protected $fillable = [
         'user_id',
         'product_id',
-        'order_id',
-        'rating',
-        'comment',
-        'is_approved'
-    ];
-
-    protected $casts = [
-        'is_approved' => 'boolean',
     ];
 
     public function user()
@@ -30,10 +22,5 @@ class Review extends Model
     public function product()
     {
         return $this->belongsTo(Product::class);
-    }
-
-    public function order()
-    {
-        return $this->belongsTo(Order::class);
     }
 }

@@ -9,6 +9,8 @@ use Stripe\PaymentIntent;
 use App\Models\Order;
 use App\Models\Payment;
 use App\Services\NotificationService;
+use Illuminate\Support\Facades\Auth;
+use App\Models\BusinessSetting;
 
 class PaymentController
 {
@@ -35,6 +37,16 @@ class PaymentController
 
         $order = Order::findOrFail($validated['order_id']);
 
+        // Fetch user's business settings
+        $settings = BusinessSetting::first();
+
+        if (!$settings) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Business settings not found for this user'
+            ], 404);
+        }
+
         $paymentData = [
             'order_id' => $order->id,
             'payment_method' => $validated['payment_method'],
@@ -43,11 +55,18 @@ class PaymentController
             'notes' => $validated['notes'] ?? null,
         ];
 
+        // Stripe Payment
         if ($validated['payment_method'] === 'stripe') {
-            // Initialize Stripe
-            Stripe::setApiKey(env('STRIPE_SECRET'));
 
-            // Create PaymentIntent
+            if (!$settings->stripe_enabled || !$settings->stripe_secret_key) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Stripe is not enabled or configured for this business'
+                ], 400);
+            }
+
+            Stripe::setApiKey($settings->stripe_secret_key);
+
             $paymentIntent = PaymentIntent::create([
                 'amount' => (int)($validated['amount'] * 100), // cents
                 'currency' => strtolower($validated['currency']),
@@ -68,20 +87,28 @@ class PaymentController
             ]);
         }
 
+        // KHQR Payment
         if ($validated['payment_method'] === 'khqr') {
-            // Generate KHQR code payload
-            try {
-                $merchantName = env('KHQR_MERCHANT_NAME', 'Merchant');
-                $merchantAccount = env('KHQR_MERCHANT_ACCOUNT', 'account');
-                $currency = $validated['currency'];
-                $amount = $validated['amount'];
-                $orderId = $order->order_number;
 
-                $qrPayload = $this->khqrService->generateValidKHQR($merchantName, $merchantAccount, $amount, $currency, $orderId);
+            if (!$settings->khqr_enabled || !$settings->khqr_merchant_name || !$settings->khqr_merchant_account) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'KHQR is not enabled or configured for this business'
+                ], 400);
+            }
+
+            try {
+                $qrPayload = $this->khqrService->generateValidKHQR(
+                    $settings->khqr_merchant_name,
+                    $settings->khqr_merchant_account,
+                    $validated['amount'],
+                    $validated['currency'],
+                    $order->order_number
+                );
 
                 $payment = Payment::create($paymentData);
 
-                $this->notify->notifyPaymentCreated($payment, $currency);
+                $this->notify->notifyPaymentCreated($payment, $validated['currency']);
 
                 return response()->json([
                     'success' => true,
@@ -89,7 +116,11 @@ class PaymentController
                     'khqr_payload' => $qrPayload,
                 ]);
             } catch (\Exception $e) {
-                return response()->json(['success' => false, 'message' => 'KHQR generation failed', 'error' => $e->getMessage()], 500);
+                return response()->json([
+                    'success' => false,
+                    'message' => 'KHQR generation failed',
+                    'error' => $e->getMessage()
+                ], 500);
             }
         }
 

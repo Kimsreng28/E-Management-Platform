@@ -24,14 +24,29 @@ use App\Http\Controllers\Api\DashboardController;
 use App\Http\Controllers\Api\StockController;
 use App\Http\Controllers\Api\ReportController;
 use App\Http\Controllers\Api\SearchController;
-
+use App\Http\Controllers\Api\FAQController;
+use App\Http\Controllers\Api\WishlistController;
+use Illuminate\Support\Facades\Broadcast;
 
 // Public Route (accessible without login or authentication)
+
+// FAQ routes
+Route::get('/faqs', [FAQController::class, 'index']);
+Route::get('/faqs/categories', [FAQController::class, 'categories']);
+Route::get('/faqs/category/{categoryId}', [FAQController::class, 'byCategory']);
+Route::get('/faqs/search', [FAQController::class, 'search']);
+Route::get('/faqs/{id}', [FAQController::class, 'show']);
+Route::post('/faqs', [FAQController::class, 'store']);
+Route::put('/faqs/{id}', [FAQController::class, 'update']);
+Route::delete('/faqs/{id}', [FAQController::class, 'destroy']);
 
 // Product stats
 Route::get('products/stats', [ProductController::class, 'getProductStats']);
 Route::get('orders/stats', [OrderController::class, 'getOrderStats']);
 Route::get('customers/stats', [CustomerController::class, 'statCustomer']);
+
+// search global
+Route::get('/search-products', [SearchController::class, 'searchForProduct']);
 
 // Product QR
 Route::get('/products/{slug}/qr-code/{locale?}/{format?}', [ProductController::class, 'generateProductQrCode']);
@@ -40,11 +55,17 @@ Route::get('/products/{slug}/qr-details', [ProductController::class, 'getProduct
 // Category routes
 Route::get('categories', [CategoryController::class, 'index']);
 Route::get('categories/featured', [CategoryController::class, 'featured']);
+Route::get('/categories/stats', [CategoryController::class, 'stats']);
 Route::get('categories/{slug}', [CategoryController::class, 'show']);
+Route::get('categories/{slug}/products', [CategoryController::class, 'products']);
 
 // Product routes
 Route::get('products', [ProductController::class, 'getAllProducts']);
 Route::get('products/{slug}', [ProductController::class, 'getProduct']);
+
+Route::get('/products/category/{categoryId}', [ProductController::class, 'getByCategory']);
+Route::get('/reviews/product/{productId}', [ReviewController::class, 'getByProduct']);
+Route::get('/orders/{order}/invoice', [OrderController::class, 'downloadInvoice']);
 
 // Review routes
 Route::get('reviews', [ReviewController::class, 'index']);
@@ -124,6 +145,13 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('orders', [OrderController::class, 'getAllOrders']);
     Route::get('orders/{order}', [OrderController::class, 'showOrder']);
     Route::post('orders', [OrderController::class, 'createOrder']);
+    Route::post('orders/preview', [OrderController::class, 'previewOrder']);
+
+
+    // Wishlist products
+    Route::get('wishlist', [WishlistController::class, 'index']);
+    Route::post('wishlist', [WishlistController::class, 'store']);
+    Route::delete('wishlist/{productId}', [WishlistController::class, 'destroy']);
 
     // Payment
     Route::get('payments', [PaymentController::class, 'index']);
@@ -213,4 +241,10 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Search Global
     Route::get('/search', [SearchController::class, 'search']);
+
 });
+
+Broadcast::routes([
+    'prefix' => 'broadcasting',
+    'middleware' => ['auth:sanctum'],
+]);

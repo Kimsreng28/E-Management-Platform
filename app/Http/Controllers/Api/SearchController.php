@@ -120,4 +120,63 @@ class SearchController extends Controller
             ], 500);
         }
     }
+
+    public function searchForProduct(Request $request)
+    {
+        try {
+            $query = $request->get('q', '');
+            $type = $request->get('type', 'all');
+
+            if (empty($query)) {
+                return response()->json([
+                    'success' => true,
+                    'data' => [
+                        'products' => [],
+                    ]
+                ]);
+            }
+
+            $results = [
+                'products' => [],
+            ];
+
+            // Search products
+            if ($type === 'all' || $type === 'products') {
+                $results['products'] = Product::where('is_active', true)
+                ->whereNull('deleted_at')
+                ->where(function ($q) use ($query) {
+                    $q->where('name', 'like', "%{$query}%")
+                    ->orWhere('model_code', 'like', "%{$query}%")
+                    ->orWhere('short_description', 'like', "%{$query}%")
+                    ->orWhere('description', 'like', "%{$query}%");
+                })
+                ->take(5)
+                ->get()
+                ->map(function ($product) {
+                    return [
+                        'id' => $product->id,
+                        'name' => $product->name,
+                        "slug" => $product->slug,
+                        'sku' => $product->model_code, // or use $product->sku if exists
+                        'price' => $product->price,
+                        'stock' => $product->stock,
+                        'image' => optional($product->images->first())->path,
+                        'type' => 'product',
+                    ];
+                });
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => $results
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Search error: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Search failed'
+            ], 500);
+        }
+    }
 }
