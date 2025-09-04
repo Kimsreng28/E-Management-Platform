@@ -1,21 +1,29 @@
 <?php
 
-namespace App\Http\Controllers;
+namespace App\Http\Controllers\Api;
 
 use App\Models\Conversation;
 use App\Models\Message;
 use App\Models\User;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Auth;
 use Illuminate\Routing\Controller;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Foundation\Auth\Access\AuthorizesRequests;
 
 class ConversationController extends Controller
 {
+
+    use AuthorizesRequests;
+
     public function index()
     {
         $user = Auth::user();
         $conversations = $user->conversations()
             ->with(['participants', 'latestMessage'])
+            ->withCount(['messages as unread_count' => function ($query) use ($user) {
+                $query->where('user_id', '!=', $user->id)
+                    ->whereNull('read_at');
+            }])
             ->orderByDesc(
                 Message::select('created_at')
                     ->whereColumn('conversation_id', 'conversations.id')
@@ -60,10 +68,18 @@ class ConversationController extends Controller
         })->first();
 
         if (!$conversation) {
+            // Determine conversation type based on user roles
+            $type = 'customer_to_customer';
+            if ($currentUser->role->name === 'customer' && $otherUser->role->name === 'delivery') {
+                $type = 'customer_to_delivery';
+            } elseif ($currentUser->role->name === 'delivery' && $otherUser->role->name === 'customer') {
+                $type = 'delivery_to_customer';
+            }
+
             // Create a new conversation
             $conversation = Conversation::create([
                 'title' => "Chat between {$currentUser->name} and {$otherUser->name}",
-                'type' => $otherUser->isDelivery() ? 'customer_to_delivery' : 'customer_to_customer'
+                'type' => $type
             ]);
 
             // Attach participants
@@ -71,18 +87,30 @@ class ConversationController extends Controller
         }
 
         return response()->json([
-            'conversation' => $conversation
+            'conversation' => $conversation->load('participants')
         ]);
     }
 
     public function getDeliveryAgents()
     {
-        $deliveryAgents = User::where('role_id', 3) // Assuming delivery role ID is 3
+        $deliveryAgents = User::where('role_id', 3)
             ->where('is_active', true)
             ->get();
 
         return response()->json([
             'delivery_agents' => $deliveryAgents
+        ]);
+    }
+
+    // Get customers (role_id = 2)
+    public function getCustomers()
+    {
+        $customers = User::where('role_id', 2)
+            ->where('is_active', true)
+            ->get();
+
+        return response()->json([
+            'customers' => $customers
         ]);
     }
 }

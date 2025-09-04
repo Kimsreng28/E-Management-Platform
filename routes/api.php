@@ -27,6 +27,11 @@ use App\Http\Controllers\Api\SearchController;
 use App\Http\Controllers\Api\FAQController;
 use App\Http\Controllers\Api\WishlistController;
 use Illuminate\Support\Facades\Broadcast;
+use App\Http\Controllers\Api\ChatController;
+use App\Http\Controllers\Api\ConversationController;
+use Illuminate\Support\Facades\Auth;
+use App\Events\UserTyping;
+use App\Events\UserStopTyping;
 
 // Public Route (accessible without login or authentication)
 
@@ -242,9 +247,33 @@ Route::middleware('auth:sanctum')->group(function () {
     // Search Global
     Route::get('/search', [SearchController::class, 'search']);
 
+    // Conversations
+    Route::get('/conversations', [ConversationController::class, 'index']);
+    Route::get('/conversations/{conversation}', [ConversationController::class, 'show']);
+    Route::post('/conversations/find-or-create/{userId}', [ConversationController::class, 'findOrCreateConversation']);
+    Route::get('/delivery-agents', [ConversationController::class, 'getDeliveryAgents']);
+    Route::get('/customers-agents', [ConversationController::class, 'getCustomers']);
+
+    // Messages
+    Route::post('/conversations/{conversation}/messages', [ChatController::class, 'sendMessage']);
+    Route::post('/conversations/{conversation}/read', [ChatController::class, 'markAsRead']);
+
+    Route::post('/conversations/{conversation}/typing', function ($conversationId) {
+        $user = Auth::user();
+        broadcast(new UserTyping($conversationId, $user->id, $user->name));
+        return response()->json(['status' => 'typing']);
+    });
+
+    Route::post('/conversations/{conversation}/stop-typing', function ($conversationId) {
+        $user = Auth::user();
+        broadcast(new UserStopTyping($conversationId, $user->id, $user->name));
+        return response()->json(['status' => 'stopped typing']);
+    });
 });
 
-Broadcast::routes([
-    'prefix' => 'broadcasting',
-    'middleware' => ['auth:sanctum'],
-]);
+// Broadcast::routes([
+//     'prefix' => 'broadcasting',
+//     'middleware' => ['auth:sanctum'],
+// ]);
+
+Broadcast::routes(['middleware' => ['auth:api']]);

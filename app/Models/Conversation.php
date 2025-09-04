@@ -38,4 +38,21 @@ class Conversation extends Model
             $query->where('name', 'customer');
         })->get();
     }
+
+    public function markAsRead($userId)
+    {
+        $this->messages()->where('user_id', '!=', $userId)
+            ->whereNull('read_at')
+            ->update(['read_at' => now()]);
+
+        // Also update the participant's last_read timestamp
+        $this->participants()->updateExistingPivot($userId, [
+            'last_read' => now()
+        ]);
+    }
+
+    public function latestMessage()
+{
+    return $this->hasOne(Message::class)->latestOfMany();
+}
 }

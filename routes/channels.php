@@ -17,8 +17,22 @@ Broadcast::channel('user.notifications.{notifiable_id}', function ($user, $notif
     return $user && (int) $user->id === (int) $notifiable_id;
 });
 
-Route::get('/test-notification', function () {
-    $notification = App\Models\Notification::first();
-    event(new App\Events\NotificationCreated($notification));
-    return ['status' => 'notification dispatched'];
+// Conversation channel
+Broadcast::channel('chat.{conversationId}', function ($user, $conversationId) {
+    $conversation = \App\Models\Conversation::find($conversationId);
+
+    if (!$conversation) return false;
+
+    $isParticipant = $conversation->participants
+        ->contains(fn($p) => (int)$p->id === (int)$user->id);
+
+    if ($isParticipant) {
+        return [
+            'id' => $user->id,
+            'name' => $user->name,
+            'avatar' => $user->avatar,
+        ];
+    }
+
+    return false;
 });

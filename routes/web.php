@@ -2,6 +2,7 @@
 
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\AuthController;
+use Illuminate\Support\Facades\Broadcast;
 
 Route::get('/', function () {
     return view('google');
@@ -12,3 +13,7 @@ Route::get('/api/auth/google/callback', [App\Http\Controllers\Api\AuthController
 
 Route::get('/auth/telegram/redirect', [AuthController::class, 'telegramRedirect'])->name('auth.telegram.redirect');
 Route::post('/auth/telegram/spa-login', [AuthController::class, 'telegramSpaLogin']);
+
+Route::get('/welcome', function () {
+    return view('welcome');
+});
