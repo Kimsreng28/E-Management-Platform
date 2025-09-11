@@ -11,7 +11,7 @@ class Conversation extends Model
 {
     use HasFactory;
 
-    protected $fillable = ['title', 'type'];
+    protected $fillable = ['title', 'type', 'participants_key', 'delivery_id'];
 
     public function participants(): BelongsToMany
     {

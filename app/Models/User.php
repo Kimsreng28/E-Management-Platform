@@ -195,4 +195,14 @@ class User extends Authenticatable
     {
         return $this->role_id === 2; // Customer role ID is 2
     }
+
+    public function deliveries()
+    {
+        return $this->hasMany(Delivery::class, 'delivery_agent_id');
+    }
+
+    public function deliveryPreferences()
+    {
+        return $this->hasOne(DeliveryPreferences::class);
+    }
 }

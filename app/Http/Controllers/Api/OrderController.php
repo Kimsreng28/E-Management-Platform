@@ -11,6 +11,7 @@ use App\Models\BusinessSetting;
 use App\Models\Coupon;
 use App\Models\Product;
 use Barryvdh\DomPDF\Facade\Pdf;
+use Illuminate\Support\Facades\Log;
 
 class OrderController
 {
@@ -334,12 +335,12 @@ class OrderController
     public function downloadInvoice(Order $order, Request $request, $type = 'download')
     {
         try {
-            $pdf = \PDF::loadView('invoices.template', compact('order'));
+            $pdf = PDF::loadView('invoices.template', compact('order'));
 
             $headers = [
                 'Content-Type'              => 'application/pdf',
                 'Content-Disposition'       => "attachment; filename=invoice-{$order->id}.pdf",
-                'Access-Control-Allow-Origin' => 'http://127.0.0.1:3000', // your frontend
+                'Access-Control-Allow-Origin' => 'http://127.0.0.1:3000', // frontend
                 'Access-Control-Allow-Methods' => 'GET, OPTIONS',
                 'Access-Control-Allow-Headers' => 'Authorization, Content-Type',
                 'Access-Control-Expose-Headers' => 'Content-Disposition',
@@ -348,7 +349,7 @@ class OrderController
             return response($pdf->output(), 200, $headers);
 
         } catch (\Exception $e) {
-            \Log::error('Invoice generation error: ' . $e->getMessage());
+            Log::error('Invoice generation error: ' . $e->getMessage());
             return response()->json(['error' => 'Failed to generate invoice'], 500);
         }
     }

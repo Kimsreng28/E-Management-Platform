@@ -32,6 +32,7 @@ use App\Http\Controllers\Api\ConversationController;
 use Illuminate\Support\Facades\Auth;
 use App\Events\UserTyping;
 use App\Events\UserStopTyping;
+use App\Http\Controllers\Api\DeliveryController;
 
 // Public Route (accessible without login or authentication)
 
@@ -258,6 +259,9 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/conversations/{conversation}/messages', [ChatController::class, 'sendMessage']);
     Route::post('/conversations/{conversation}/read', [ChatController::class, 'markAsRead']);
 
+    Route::post('/conversations/{conversation}/messages/{message}/update', [ChatController::class, 'updateMessage']);
+    Route::delete('/conversations/{conversation}/messages/{message}', [ChatController::class, 'deleteMessage']);
+
     Route::post('/conversations/{conversation}/typing', function ($conversationId) {
         $user = Auth::user();
         broadcast(new UserTyping($conversationId, $user->id, $user->name));
@@ -269,6 +273,34 @@ Route::middleware('auth:sanctum')->group(function () {
         broadcast(new UserStopTyping($conversationId, $user->id, $user->name));
         return response()->json(['status' => 'stopped typing']);
     });
+
+    Route::post('/conversations/{conversation}/initiate-call', [ChatController::class, 'initiateCall']);
+    Route::post('/conversations/{conversation}/accept-call', [ChatController::class, 'acceptCall']);
+    Route::post('/conversations/{conversation}/reject-call', [ChatController::class, 'rejectCall']);
+    Route::post('/conversations/{conversation}/end-call', [ChatController::class, 'endCall']);
+
+    // Delivery routes
+    Route::get('/delivery/agents', [DeliveryController::class, 'getAvailableAgents']); // Delivery Agent
+
+    // Delivery routes for admin
+    Route::post('/orders/{order}/assign-delivery', [DeliveryController::class, 'assignDelivery']);
+    Route::post('/deliveries/{delivery}/update-status', [DeliveryController::class, 'updateStatus']);
+    Route::get('/deliveries/{delivery}/tracking', [DeliveryController::class, 'getTracking']); // share route
+    Route::post('/deliveries/{delivery}/accept', [DeliveryController::class, 'acceptDelivery']); // Delivery Agent
+
+    // Delivery routes for customer
+    Route::post('/deliveries/{delivery}/confirm-receipt', [DeliveryController::class, 'confirmReceipt']);
+    Route::get('/delivery-preferences', [DeliveryController::class, 'getPreferences']);
+    Route::put('/delivery-preferences', [DeliveryController::class, 'updatePreferences']);
+    Route::get('/deliveries/{delivery}/agent-location', [DeliveryController::class, 'getAgentLocation']);
+    Route::post('/deliveries/{delivery}/update-location', [DeliveryController::class, 'updateAgentLocation']); // Delivery Agent
+    Route::get('/orders/{order}/delivery', [DeliveryController::class, 'getDeliveryInfo']);
+    Route::get('/deliveries/{delivery}/options', [DeliveryController::class, 'getDeliveryOptions']);
+    Route::get('/deliveries/active', [DeliveryController::class, 'getActiveDeliveries']);
+    Route::get('/deliveries/{id}', [DeliveryController::class, 'getDeliveryById']);
+
+    // Conversation routes for delivery communication
+    Route::post('/deliveries/{delivery}/start-conversation', [ConversationController::class, 'startDeliveryConversation']);
 });
 
 // Broadcast::routes([

@@ -13,6 +13,7 @@ use App\Models\Message;
 use App\Models\Conversation;
 use Illuminate\Contracts\Broadcasting\ShouldBroadcastNow;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 
 class MessageSent implements ShouldBroadcast
 {
@@ -28,6 +29,7 @@ class MessageSent implements ShouldBroadcast
             'conversation_id' => $conversation->id,
             'users_in_conversation' => $conversation->participants->pluck('id')
         ]);
+
         $this->message = $message;
         $this->conversation = $conversation;
     }
@@ -44,20 +46,44 @@ class MessageSent implements ShouldBroadcast
 
     public function broadcastWith()
     {
+
+        // Add debug logging
+        Log::info('MessageSent broadcast data', [
+            'message_id' => $this->message->id,
+            'call_type' => $this->message->call_type,
+            'call_status' => $this->message->call_status,
+            'duration' => $this->message->duration,
+            'call_id' => $this->message->call_id,
+        ]);
+
+        $attachments = [];
+        if ($this->message->attachment) {
+            $attachments[] = [
+                'type' => $this->message->type,
+                'url' => url(Storage::url($this->message->attachment)),
+            ];
+        }
+
         return [
             'message' => [
                 'id' => $this->message->id,
                 'body' => $this->message->body,
                 'type' => $this->message->type,
                 'user_id' => $this->message->user_id,
+                'attachments' => $attachments,
+                'conversation_id' => $this->message->conversation_id,
+                'created_at' => $this->message->created_at,
+                'read_at' => $this->message->read_at,
+
+                'call_type' => $this->message->call_type,
+                'call_status' => $this->message->call_status,
+                'duration' => $this->message->duration,
+                'call_id' => $this->message->call_id,
                 'user' => [
                     'id' => $this->message->user->id,
                     'name' => $this->message->user->name,
                     'avatar' => $this->message->user->avatar,
                 ],
-                'conversation_id' => $this->message->conversation_id,
-                'created_at' => $this->message->created_at,
-                'read_at' => $this->message->read_at,
             ]
         ];
     }

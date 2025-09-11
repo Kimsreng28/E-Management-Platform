@@ -76,10 +76,13 @@ class ConversationController extends Controller
                 $type = 'delivery_to_customer';
             }
 
+            $participantsKey = implode('_', [$currentUser->id, $otherUser->id]);
+
             // Create a new conversation
             $conversation = Conversation::create([
                 'title' => "Chat between {$currentUser->name} and {$otherUser->name}",
-                'type' => $type
+                'type' => $type,
+                'participants_key' => $participantsKey
             ]);
 
             // Attach participants

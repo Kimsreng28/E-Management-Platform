@@ -13,6 +13,8 @@ return new class extends Migration
     {
         Schema::create('conversations', function (Blueprint $table) {
             $table->id();
+            $table->string('participants_key')->unique();
+            $table->foreignId('delivery_id')->nullable()->constrained('deliveries')->onDelete('cascade');
             $table->string('title')->nullable();
             $table->enum('type', ['customer_to_customer', 'customer_to_delivery']);
             $table->timestamps();

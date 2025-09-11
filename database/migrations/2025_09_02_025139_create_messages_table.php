@@ -17,6 +17,11 @@ return new class extends Migration
             $table->foreignId('user_id')->constrained()->onDelete('cascade');
             $table->text('body');
             $table->string('type')->default('text');
+            $table->string('attachment')->nullable();
+            $table->integer('duration')->nullable();
+            $table->string('call_type')->nullable();
+            $table->string('call_status')->nullable();
+            $table->unsignedBigInteger('call_id')->nullable();
             $table->timestamp('read_at')->nullable();
             $table->timestamps();
         });

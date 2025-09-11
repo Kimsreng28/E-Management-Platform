@@ -28,7 +28,7 @@ class PaymentController
     {
         $validated = $request->validate([
             'order_id' => 'required|exists:orders,id',
-            'payment_method' => 'required|in:stripe,khqr',
+            'payment_method' => 'required|in:stripe,khqr,cod',
             'amount' => 'required|numeric|min:0',
             'currency' => 'required|string|size:3',
             'transaction_id' => 'nullable|string',
@@ -122,6 +122,20 @@ class PaymentController
                     'error' => $e->getMessage()
                 ], 500);
             }
+        }
+
+        // COD
+        if ($validated['payment_method'] === 'cod') {
+            $paymentData['status'] = 'pending'; // or 'cod'
+            $payment = Payment::create($paymentData);
+
+            $this->notify->notifyPaymentCreated($payment, $validated['currency']);
+
+            return response()->json([
+                'success' => true,
+                'payment' => $payment,
+                'message' => 'Payment created for Cash on Delivery'
+            ]);
         }
 
         return response()->json(['success' => false, 'message' => 'Unsupported payment method'], 400);

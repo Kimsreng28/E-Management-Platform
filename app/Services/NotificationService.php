@@ -32,7 +32,7 @@ class NotificationService
         ];
 
         // 1) Buyer Notification (Database)
-        $user->notifications()->create([
+        $notification = $user->notifications()->create([
             'type' => 'order_created',
             'data' => [
                 'title' => '🎉 Order Confirmed!',
@@ -47,13 +47,16 @@ class NotificationService
             'read_at' => null,
         ]);
 
+        // Trigger event
+        event(new NotificationCreated($notification));
+
         // 2) Buyer Email (Detailed)
         $this->sendOrderConfirmationEmail($user, $order);
 
         // 3) Admin Notifications
         User::admins()->get()->each(function ($admin) use ($order, $orderData) {
             // Database notification
-            $admin->notifications()->create([
+            $notification = $admin->notifications()->create([
                 'type' => 'order_created_admin',
                 'data' => [
                     'title' => '📦 New Order Received',
@@ -68,6 +71,9 @@ class NotificationService
                 ],
                 'read_at' => null,
             ]);
+
+            // Trigger event
+            event(new NotificationCreated($notification));
 
             // Admin email
             $this->sendAdminOrderNotification($admin, $order);
@@ -207,7 +213,7 @@ class NotificationService
         ];
 
         // Buyer notification
-        $user->notifications()->create([
+        $notification = $user->notifications()->create([
             'type' => 'payment_created',
             'data' => [
                 'title' => '💳 Payment Received',
@@ -221,12 +227,15 @@ class NotificationService
             ],
         ]);
 
+        // Trigger event
+        event(new NotificationCreated($notification));
+
         // Send payment confirmation email
         $this->sendPaymentConfirmationEmail($user, $order, $payment, $currency);
 
         // Admin notifications
         User::admins()->get()->each(function ($admin) use ($order, $payment, $currency) {
-            $admin->notifications()->create([
+            $notification = $admin->notifications()->create([
                 'type' => 'payment_created_admin',
                 'data' => [
                     'title' => '💳 Payment Received',
@@ -239,6 +248,9 @@ class NotificationService
                     'customer' => $order->user->name,
                 ],
             ]);
+
+            // Trigger event
+            event(new NotificationCreated($notification));
         });
 
         // Telegram notifications

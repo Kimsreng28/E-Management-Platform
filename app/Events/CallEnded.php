@@ -1,0 +1,58 @@
+<?php
+
+namespace App\Events;
+
+use Illuminate\Broadcasting\Channel;
+use Illuminate\Broadcasting\InteractsWithSockets;
+use Illuminate\Broadcasting\PresenceChannel;
+use Illuminate\Broadcasting\PrivateChannel;
+use Illuminate\Contracts\Broadcasting\ShouldBroadcast;
+use Illuminate\Foundation\Events\Dispatchable;
+use Illuminate\Queue\SerializesModels;
+
+class CallEnded implements ShouldBroadcast
+{
+    use Dispatchable, InteractsWithSockets, SerializesModels;
+
+    public $callData;
+    public $conversation;
+    public $message;
+
+    public function __construct($callData, $conversation, $message = null)
+    {
+        $this->callData = $callData;
+        $this->conversation = $conversation;
+        $this->message = $message;
+    }
+
+    public function broadcastOn()
+    {
+        return new PresenceChannel('chat.' . $this->conversation->id);
+    }
+
+    public function broadcastAs()
+    {
+        return 'call.ended';
+    }
+
+    public function broadcastWith()
+    {
+        return [
+            'callData' => $this->callData,
+            'message' => [
+                'id' => $this->message->id,
+                'type' => 'call',
+                'call_type' => $this->message->call_type,
+                'call_status' => $this->message->call_status,
+                'duration' => $this->message->duration,
+                'call_reason' => $this->message->call_reason,
+                'user' => [
+                    'id' => $this->message->user->id,
+                    'name' => $this->message->user->name,
+                    'avatar' => $this->message->user->avatar,
+                ],
+                'created_at' => $this->message->created_at,
+            ],
+        ];
+    }
+}

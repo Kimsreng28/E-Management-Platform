@@ -79,4 +79,9 @@ class Order extends Model
             $order->order_number = 'ORD-' . strtoupper(uniqid());
         });
     }
+
+    public function delivery()
+    {
+        return $this->hasOne(Delivery::class);
+    }
 }
