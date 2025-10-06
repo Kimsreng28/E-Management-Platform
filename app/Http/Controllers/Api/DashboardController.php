@@ -27,7 +27,7 @@ class DashboardController extends Controller
             ->sum('total');
 
         $revenueChange = $lastMonthRevenue > 0
-            ? (($currentMonthRevenue - $lastMonthRevenue) / $lastMonthRevenue) * 100
+            ? round((($currentMonthRevenue - $lastMonthRevenue) / $lastMonthRevenue) * 100, 2)
             : 0;
 
         // ORDERS
@@ -40,7 +40,7 @@ class DashboardController extends Controller
             ->count();
 
         $ordersChange = $lastMonthOrders > 0
-            ? (($currentMonthOrders - $lastMonthOrders) / $lastMonthOrders) * 100
+            ? round((($currentMonthOrders - $lastMonthOrders) / $lastMonthOrders) * 100, 2)
             : 0;
 
         // PRODUCTS
@@ -50,7 +50,7 @@ class DashboardController extends Controller
             ->count();
 
         $productsChange = $productsLastMonth > 0
-            ? (($totalProducts - $productsLastMonth) / $productsLastMonth) * 100
+            ? round((($totalProducts - $productsLastMonth) / $productsLastMonth) * 100, 2)
             : 0;
 
         // ACTIVE CUSTOMERS (last hour vs previous hour) using activity logs
@@ -85,7 +85,7 @@ class DashboardController extends Controller
             'orders' => [
                 'current_month' => $currentMonthOrders,
                 'last_month' => $lastMonthOrders,
-                'change' => $ordersChange,
+                'change' => ($ordersChange > 0 ? '+' : '') . $ordersChange,
             ],
             'products' => [
                 'total' => $totalProducts,

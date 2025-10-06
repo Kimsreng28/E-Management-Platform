@@ -66,8 +66,15 @@ Route::get('categories/{slug}', [CategoryController::class, 'show']);
 Route::get('categories/{slug}/products', [CategoryController::class, 'products']);
 
 // Product routes
+Route::get('/products/popular', [ProductController::class, 'getPopularProducts']);
+Route::get('/products/recommended', [ProductController::class, 'getRecommendedProducts']);
+Route::get('/products/highly-rated', [ProductController::class, 'getHighlyRatedProducts']);
+Route::get('/products/user-reviewed', [ProductController::class, 'getUserReviewedProducts']);
+
 Route::get('products', [ProductController::class, 'getAllProducts']);
 Route::get('products/{slug}', [ProductController::class, 'getProduct']);
+Route::get('/products/barcode/{barcode}', [ProductController::class, 'getProductByBarcode']);
+Route::get('/products/{slug}/barcode', [ProductController::class, 'generateBarcode']);
 
 Route::get('/products/category/{categoryId}', [ProductController::class, 'getByCategory']);
 Route::get('/reviews/product/{productId}', [ReviewController::class, 'getByProduct']);
@@ -109,10 +116,13 @@ Route::middleware(['auth:sanctum', 'role:admin'])->group(function () {
     Route::put('companies/{slug}', [BrandController::class, 'updateBrand']);
     Route::delete('companies/{slug}', [BrandController::class, 'deleteBrand']);
 
+    Route::get('/products/export/csv', [ProductController::class, 'exportProducts']);
+
     // Product routes
     Route::post('products', [ProductController::class, 'createProduct']);
     Route::put('products/{slug}', [ProductController::class, 'updateProduct']);
     Route::delete('products/{slug}', [ProductController::class, 'deleteProduct']);
+    Route::post('/products/import', [ProductController::class, 'importProducts']);
 
     // Order routes
     Route::put('orders/{order}', [OrderController::class, 'updateOrderStatus']);

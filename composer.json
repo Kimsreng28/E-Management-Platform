@@ -19,6 +19,7 @@
         "laravel/socialite": "^5.23",
         "laravel/tinker": "^2.10.1",
         "league/csv": "^9.24",
+        "milon/barcode": "^12.0",
         "propaganistas/laravel-disposable-email": "^2.4",
         "simplesoftwareio/simple-qrcode": "^4.2",
         "socialiteproviders/telegram": "^4.1",

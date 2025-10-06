@@ -130,7 +130,7 @@ class CustomerController extends Controller
             'totalCustomers' => $totalCustomers,
             'activeCustomers' => $activeCustomers,
             'inactiveCustomers' => $inactiveCustomers,
-            'totalRevenue' => $currentMonthRevenue,
+            'totalRevenue'     => round($currentMonthRevenue, 2),
             'change' => round($changePercent, 2) . '%',
         ]);
     }

@@ -317,23 +317,35 @@ class NotificationService
         $admins = User::admins()->get();
 
         foreach ($admins as $admin) {
+
+            if ($product->stock <= 0) {
+                $alertType = 'out_of_stock';
+                $title     = '🛑 Out of Stock';
+                $message   = "Product '{$product->name}' is out of stock";
+            } elseif ($product->stock <= $product->low_stock_threshold) {
+                $alertType = 'low_stock';
+                $title     = '⚠️ Low Stock';
+                $message   = "Product '{$product->name}' has low stock: {$product->stock} remaining";
+            } else {
+                // No alert, skip
+                continue;
+            }
+
             // Prepare notification data
             $notificationData = [
-                'product_id' => $product->id,
-                'product_name' => $product->name,
+                'product_id'    => $product->id,
+                'product_name'  => $product->name,
                 'current_stock' => $product->stock,
-                'threshold' => $product->low_stock_threshold,
-                'alert_type' => $product->stock <= 0 ? 'out_of_stock' : 'low_stock',
+                'threshold'     => $product->low_stock_threshold,
+                'alert_type'    => $alertType,
             ];
 
             // Create notification in DB and assign to variable
             $notification = $admin->notifications()->create([
-                'type' => $product->stock <= 0 ? 'out_of_stock' : 'low_stock',
+                'type' => $alertType,
                 'data' => array_merge([
-                    'title' => $product->stock <= 0 ? '🛑 Out of Stock' : '⚠️ Low Stock',
-                    'message' => $product->stock <= 0
-                        ? "Product '{$product->name}' is out of stock"
-                        : "Product '{$product->name}' has low stock: {$product->stock} remaining",
+                    'title'   => $title,
+                    'message' => $message,
                 ], $notificationData),
             ]);
 
@@ -344,9 +356,7 @@ class NotificationService
             $this->sendStockAlertEmail($admin, $product);
 
             // Send Telegram notification
-            $telegramMessage = $product->stock <= 0
-                ? "🛑 *Out of Stock Alert*\nProduct: {$product->name}\nCurrent Stock: 0"
-                : "⚠️ *Low Stock Alert*\nProduct: {$product->name}\nCurrent Stock: {$product->stock}\nThreshold: {$product->low_stock_threshold}";
+            $telegramMessage = $title . "\nProduct: {$product->name}\nCurrent Stock: {$product->stock}\nThreshold: {$product->low_stock_threshold}";
 
             $this->maybeSendTelegramForUser($admin, $telegramMessage);
         }

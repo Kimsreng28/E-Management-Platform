@@ -12,7 +12,15 @@ class CouponController extends Controller
 
     public function getAllCoupons()
     {
+        $now = now();
         $coupons = Coupon::all();
+
+        foreach ($coupons as $coupon) {
+            if ($coupon->end_date < $now && $coupon->is_active) {
+                $coupon->update(['is_active' => false]);
+            }
+        }
+
         return response()->json($coupons);
     }
 

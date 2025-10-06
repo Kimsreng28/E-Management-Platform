@@ -12,6 +12,13 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Validator;
 use App\Models\BusinessSetting;
 use SimpleSoftwareIO\QrCode\Facades\QrCode;
+use App\Models\Category;
+use App\Models\Brand;
+use League\Csv\Reader;
+use League\Csv\Writer;
+use SplTempFileObject;
+use Milon\Barcode\DNS1D;
+use Illuminate\Support\Facades\Storage;
 
 class ProductController extends Controller
 {
@@ -57,7 +64,7 @@ class ProductController extends Controller
     {
         $query = Product::with(['category', 'brand', 'images', 'videos']);
 
-        // Search (by name, model_code, description)
+        // Search (by name, model_code, description, barcode)
         if ($request->filled('search')) {
             $search = $request->search;
             $query->where(function ($q) use ($search) {
@@ -76,6 +83,12 @@ class ProductController extends Controller
         if ($request->filled('category_id')) {
             $query->where('category_id', $request->category_id);
         }
+
+        // Filter by price range
+
+        // Filter by brand
+
+        // Filter by stock
 
         // Filter by featured
         if ($request->filled('is_featured')) {
@@ -150,6 +163,7 @@ class ProductController extends Controller
             'images.*'          => 'image|mimes:jpg,jpeg,png,webp|max:2048',
             'videos'            => 'nullable|array|max:2',
             'videos.*'          => 'file|mimes:mp4,avi,mov,webm|max:204800',
+            'barcode'           => 'nullable|string|unique:products',
         ],[
             'images.max' => 'You can upload a maximum of 5 images per product.',
             'videos.max' => 'You can upload a maximum of 2 videos per product.'
@@ -195,11 +209,12 @@ class ProductController extends Controller
             'created_by'        => Auth::id() ?? 1,
             'low_stock_threshold' => $threshold,
             'stock_status'      => $stock_status,
+            'barcode'           => $request->barcode ?? Product::generateUniqueBarcode(),
         ]);
 
         // Calculate discount price
-        $product->discount_price = round($product->price * (1 - ($product->discount / 100)), 2);
-        $product->save();
+        // $product->discount_price = round($product->price * (1 - ($product->discount / 100)), 2);
+        // $product->save();
 
         // Save product images
         if ($request->hasFile('images')) {
@@ -232,11 +247,224 @@ class ProductController extends Controller
         }
 
         $product->is_new = $product->created_at >= now()->subDays($this->newProductDays);
+        $discountPrice = round($product->price * (1 - ($product->discount / 100)), 2);
 
         return response()->json([
             'message' => 'Product created successfully',
-            'product' => $product->load(['images', 'videos', 'category', 'brand'])
+            'product' => $product->load(['images', 'videos', 'category', 'brand']),
+            'discount_price' => $discountPrice
         ], 201);
+    }
+
+    /**
+     * Export products to CSV
+     */
+    public function exportProducts(Request $request)
+    {
+        $query = Product::with(['category', 'brand']);
+
+        // Apply filters if any
+        if ($request->filled('category_id')) {
+            $query->where('category_id', $request->category_id);
+        }
+
+        if ($request->filled('brand_id')) {
+            $query->where('brand_id', $request->brand_id);
+        }
+
+        if ($request->filled('is_active')) {
+            $query->where('is_active', $request->is_active);
+        }
+
+        $products = $query->get();
+
+        // Check if any products exist
+        if ($products->isEmpty()) {
+            return response()->json([
+                'message' => 'No products found for export',
+                'error' => 'No products match the specified criteria'
+            ], 404);
+        }
+
+        // Create CSV
+        $csv = Writer::createFromFileObject(new SplTempFileObject());
+        $csv->insertOne([
+            'Name', 'Model Code', 'Barcode', 'Slug', 'Stock', 'Price', 'Cost Price',
+            'Discount', 'Short Description', 'Description', 'Category', 'Brand',
+            'Warranty Months', 'Is Featured', 'Is Active', 'Specifications',
+            'Low Stock Threshold', 'Stock Status'
+        ]);
+
+        foreach ($products as $product) {
+            $csv->insertOne([
+                $product->name,
+                $product->model_code,
+                $product->barcode,
+                $product->slug,
+                $product->stock,
+                $product->price,
+                $product->cost_price,
+                $product->discount,
+                $product->short_description,
+                $product->description,
+                $product->category->name ?? '',
+                $product->brand->name ?? '',
+                $product->warranty_months,
+                $product->is_featured ? 'Yes' : 'No',
+                $product->is_active ? 'Yes' : 'No',
+                json_encode($product->specifications),
+                $product->low_stock_threshold,
+                $product->stock_status,
+            ]);
+        }
+
+        $filename = 'products_export_' . date('Y-m-d_H-i-s') . '.csv';
+
+        return response((string) $csv, 200, [
+            'Content-Type' => 'text/csv',
+            'Content-Disposition' => 'attachment; filename="' . $filename . '"',
+        ]);
+    }
+
+    /**
+     * Import products from CSV
+     */
+    public function importProducts(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'csv_file' => 'required|file|mimes:csv,txt|max:10240',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json($validator->errors(), 422);
+        }
+
+        $file = $request->file('csv_file');
+        $csv = Reader::createFromPath($file->getPathname(), 'r');
+        $csv->setHeaderOffset(0);
+
+        $imported = 0;
+        $skipped = 0;
+        $errors = [];
+
+        foreach ($csv as $index => $row) {
+            try {
+                // Validate required fields
+                if (empty($row['Name']) || empty($row['Model Code']) || empty($row['Category']) || empty($row['Brand'])) {
+                    $errors[] = "Row $index: Missing required fields";
+                    $skipped++;
+                    continue;
+                }
+
+                // Find category
+                $category = Category::where('name', $row['Category'])->first();
+                if (!$category) {
+                    $errors[] = "Row $index: Category '{$row['Category']}' not found";
+                    $skipped++;
+                    continue;
+                }
+
+                // Find brand
+                $brand = Brand::where('name', $row['Brand'])->first();
+                if (!$brand) {
+                    $errors[] = "Row $index: Brand '{$row['Brand']}' not found";
+                    $skipped++;
+                    continue;
+                }
+
+                // Check if product already exists
+                if (Product::where('model_code', $row['Model Code'])->exists()) {
+                    $errors[] = "Row $index: Product with model code '{$row['Model Code']}' already exists";
+                    $skipped++;
+                    continue;
+                }
+
+                // Parse specifications if provided
+                $specifications = [];
+                if (!empty($row['Specifications'])) {
+                    $specifications = json_decode($row['Specifications'], true) ?? [];
+                }
+
+                // Create product
+                Product::create([
+                    'name' => $row['Name'],
+                    'model_code' => $row['Model Code'],
+                    'barcode' => $row['Barcode'] ?? Product::generateUniqueBarcode(),
+                    'slug' => Str::slug($row['Name']) . '-' . uniqid(),
+                    'stock' => $row['Stock'] ?? 0,
+                    'price' => $row['Price'] ?? 0,
+                    'cost_price' => $row['Cost Price'] ?? null,
+                    'discount' => $row['Discount'] ?? 0,
+                    'short_description' => $row['Short Description'] ?? '',
+                    'description' => $row['Description'] ?? '',
+                    'category_id' => $category->id,
+                    'brand_id' => $brand->id,
+                    'warranty_months' => $row['Warranty Months'] ?? null,
+                    'is_featured' => strtolower($row['Is Featured'] ?? 'no') === 'yes',
+                    'is_active' => strtolower($row['Is Active'] ?? 'yes') === 'yes',
+                    'specifications' => $specifications,
+                    'created_by' => Auth::id(),
+                    'low_stock_threshold' => $row['Low Stock Threshold'] ?? 10,
+                    'stock_status' => $row['Stock Status'] ?? 'Active',
+                ]);
+
+                $imported++;
+            } catch (\Exception $e) {
+                $errors[] = "Row $index: " . $e->getMessage();
+                $skipped++;
+            }
+        }
+
+        return response()->json([
+            'message' => 'Import completed',
+            'imported' => $imported,
+            'skipped' => $skipped,
+            'errors' => $errors,
+        ]);
+    }
+
+    /**
+     * Generate barcode for a product
+     */
+    public function generateBarcode($slug)
+    {
+        $product = Product::where('slug', $slug)->firstOrFail();
+
+        if (!$product->barcode) {
+            $product->barcode = Product::generateUniqueBarcode();
+            $product->save();
+        }
+
+        // Generate base64 barcode (Code128)
+        $barcode = new DNS1D();
+        $barcode->setStorPath(storage_path('products/barcodes/'));
+
+        $barcodeBase64 = $barcode->getBarcodePNG($product->barcode, 'C128', 3, 100);
+
+        return response()->json([
+            'barcode' => $product->barcode,
+            'image'   => 'data:image/png;base64,' . $barcodeBase64,
+        ]);
+    }
+
+    /**
+     * Get product by barcode
+     */
+    public function getProductByBarcode($barcode)
+    {
+        $product = Product::with(['category', 'brand', 'images', 'videos'])
+            ->where('barcode', $barcode)
+            ->firstOrFail();
+
+        $product->discount_price = round($product->price * (1 - ($product->discount / 100)), 2);
+        $product->is_new = $product->created_at >= now()->subDays($this->newProductDays);
+
+        // Rating info
+        $avg = $product->reviews()->avg('rating') ?? 0;
+        $product->average_rating = round((float) $avg, 1);
+        $product->total_ratings = $product->totalRatings();
+
+        return response()->json($product);
     }
 
     /**
@@ -288,6 +516,14 @@ class ProductController extends Controller
             'specifications'    => 'nullable|array',
             'specifications.*'   => 'string',
             'low_stock_threshold' => 'nullable|integer|min:0',
+            'images'            => 'nullable|array',
+            'images.*'          => 'image|mimes:jpeg,png,jpg,gif|max:2048',
+            'videos'            => 'nullable|array',
+            'videos.*'          => 'mimes:mp4,mov,avi|max:10240', // 10MB max for videos
+            'images_to_delete'  => 'nullable|array',
+            'images_to_delete.*' => 'integer',
+            'videos_to_delete'  => 'nullable|array',
+            'videos_to_delete.*' => 'integer',
         ]);
 
         if ($validator->fails()) {
@@ -322,12 +558,70 @@ class ProductController extends Controller
             $data['discount'] = floatval($data['discount']);
         }
 
-        $product->update($data);
+        // Handle image deletions
+        if ($request->has('images_to_delete')) {
+            foreach ($request->images_to_delete as $imageId) {
+                $image = ProductImage::where('id', $imageId)
+                    ->where('product_id', $product->id)
+                    ->first();
 
-        // Update discount price
-        $product->discount_price = round($product->price * (1 - ($product->discount / 100)), 2);
-        $product->is_new = $product->created_at >= now()->subDays($this->newProductDays);
-        $product->save();
+                if ($image) {
+                    // Convert "storage/products/..." to "public/products/..."
+                    $storagePath = str_replace('storage/', 'public/', $image->path);
+
+                    if (Storage::exists($storagePath)) {
+                        Storage::delete($storagePath);
+                    }
+
+                    $image->delete();
+                }
+            }
+        }
+
+        // Handle video deletions
+        if ($request->has('videos_to_delete')) {
+            foreach ($request->videos_to_delete as $videoId) {
+                $video = ProductVideo::where('id', $videoId)
+                    ->where('product_id', $product->id)
+                    ->first();
+
+                if ($video) {
+                    // Delete file from storage
+                    if (Storage::exists($video->url)) {
+                        Storage::delete($video->url);
+                    }
+                    $video->delete();
+                }
+            }
+        }
+
+        // Handle new image uploads
+        if ($request->hasFile('images')) {
+            foreach ($request->file('images') as $index => $image) {
+                $path = $image->store('products/images', 'public');
+
+                ProductImage::create([
+                    'product_id' => $product->id,
+                    'path'       => 'storage/' . $path,
+                    'is_primary' => !$product->images()->where('is_primary', true)->exists() && $index === 0,
+                    'order' => $product->images()->count() + $index,
+                ]);
+            }
+        }
+
+        // Handle new video uploads
+        if ($request->hasFile('videos')) {
+            foreach ($request->file('videos') as $video) {
+                $path = $video->store('products/videos', 'public');
+
+                ProductVideo::create([
+                    'product_id' => $product->id,
+                    'url'        => '/storage/' . $path,
+                ]);
+            }
+        }
+
+        $product->update($data);
 
         return response()->json([
             'message' => 'Product updated successfully',
@@ -382,6 +676,110 @@ class ProductController extends Controller
         }
 
         $products = $query->get();
+
+        return response()->json($products);
+    }
+
+    // Get popular products
+    public function getPopularProducts(Request $request)
+    {
+        $limit = $request->get('limit', 10);
+        $products = Product::popular($limit)->with(['images', 'category', 'brand'])->get();
+
+        // Add calculated fields
+        $products->transform(function ($product) {
+            $product->discount_price = round($product->price * (1 - ($product->discount / 100)), 2);
+            $product->is_new = $product->created_at >= now()->subDays($this->newProductDays);
+
+            // Rating info
+            $avg = $product->reviews()->avg('rating') ?? 0;
+            $product->average_rating = round((float) $avg, 1);
+            $product->total_ratings = $product->totalRatings();
+
+            return $product;
+        });
+
+        return response()->json($products);
+    }
+
+    // Get recommended products
+    public function getRecommendedProducts(Request $request)
+    {
+        $limit = $request->get('limit', 10);
+        $categoryId = $request->get('category_id');
+
+        $products = Product::recommended($categoryId, $limit)->with(['images', 'category', 'brand'])->get();
+
+        if ($products->isEmpty()) {
+            return response()->json([
+                'message' => 'No recommended products found',
+                'data' => []
+            ]);
+        }
+
+        // Add calculated fields
+        $products->transform(function ($product) {
+            $product->discount_price = round($product->price * (1 - ($product->discount / 100)), 2);
+            $product->is_new = $product->created_at >= now()->subDays($this->newProductDays);
+
+            $avg = $product->reviews()->avg('rating') ?? 0;
+            $product->average_rating = round((float) $avg, 1);
+            $product->total_ratings = $product->totalRatings();
+
+            return $product;
+        });
+
+        return response()->json($products);
+    }
+
+    // Get highly rated products
+    public function getHighlyRatedProducts(Request $request)
+    {
+        $limit = $request->get('limit', 10);
+        $minRating = $request->get('min_rating', 4);
+
+        $products = Product::highlyRated($minRating, $limit)->with(['images', 'category', 'brand'])->get();
+
+        // Add calculated fields
+        $products->transform(function ($product) {
+            $product->discount_price = round($product->price * (1 - ($product->discount / 100)), 2);
+            $product->is_new = $product->created_at >= now()->subDays($this->newProductDays);
+
+            $avg = $product->reviews()->avg('rating') ?? 0;
+            $product->average_rating = round((float) $avg, 1);
+            $product->total_ratings = $product->totalRatings();
+
+            return $product;
+        });
+
+        return response()->json($products);
+    }
+
+    // Get products reviewed by current user
+    public function getUserReviewedProducts(Request $request)
+    {
+        $user = $request->user();
+
+        if (!$user) {
+            return response()->json(['message' => 'Unauthorized'], 401);
+        }
+
+        $products = Product::reviewedByUser($user->id)
+            ->with(['category', 'brand', 'images'])
+            ->get();
+
+        // Add calculated fields
+        $products->transform(function ($product) {
+            $product->discount_price = round($product->price * (1 - ($product->discount / 100)), 2);
+            $product->is_new = $product->created_at >= now()->subDays($this->newProductDays);
+
+            // Rating info
+            $avg = $product->reviews()->avg('rating') ?? 0;
+            $product->average_rating = round((float) $avg, 1);
+            $product->total_ratings = $product->totalRatings();
+
+            return $product;
+        });
 
         return response()->json($products);
     }
