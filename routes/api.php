@@ -33,6 +33,11 @@ use Illuminate\Support\Facades\Auth;
 use App\Events\UserTyping;
 use App\Events\UserStopTyping;
 use App\Http\Controllers\Api\DeliveryController;
+use App\Models\Review;
+use App\Models\User;
+use App\Models\Product;
+use App\Models\Order;
+use App\Http\Controllers\Api\ContactController;
 
 // Public Route (accessible without login or authentication)
 
@@ -45,6 +50,9 @@ Route::get('/faqs/{id}', [FAQController::class, 'show']);
 Route::post('/faqs', [FAQController::class, 'store']);
 Route::put('/faqs/{id}', [FAQController::class, 'update']);
 Route::delete('/faqs/{id}', [FAQController::class, 'destroy']);
+
+// Contact
+Route::post('/contact', [ContactController::class, 'store']);
 
 // Product stats
 Route::get('products/stats', [ProductController::class, 'getProductStats']);
@@ -79,6 +87,24 @@ Route::get('/products/{slug}/barcode', [ProductController::class, 'generateBarco
 Route::get('/products/category/{categoryId}', [ProductController::class, 'getByCategory']);
 Route::get('/reviews/product/{productId}', [ReviewController::class, 'getByProduct']);
 Route::get('/orders/{order}/invoice', [OrderController::class, 'downloadInvoice']);
+
+// Get recent reviews with user information
+Route::get('/reviews/recent', [ReviewController::class, 'recent']);
+
+// Get platform statistics
+Route::get('/stats/platform', function () {
+    $stats = [
+        'total_users' => User::where('is_active', true)->count(),
+        'total_products' => Product::where('is_active', true)->count(),
+        'total_reviews' => Review::where('is_approved', true)->count(),
+        'total_orders' => Order::count(),
+    ];
+
+    return response()->json([
+        'success' => true,
+        'data' => $stats
+    ]);
+});
 
 // Review routes
 Route::get('reviews', [ReviewController::class, 'index']);

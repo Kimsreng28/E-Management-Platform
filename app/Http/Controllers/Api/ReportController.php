@@ -255,22 +255,22 @@ class ReportController extends Controller
                 case 'sales':
                     $data = $this->salesReport($request)->getOriginalContent();
                     $filename = 'sales_report';
-                    $headers = ['Period', 'Revenue', 'Orders', 'New Customers', 'Growth (%)'];
+                    $headers = ['No.', 'Period', 'Revenue', 'Orders', 'New Customers', 'Growth (%)'];
                     break;
                 case 'products':
                     $data = $this->productPerformance($request)->getOriginalContent();
                     $filename = 'product_performance';
-                    $headers = ['Product', 'Category', 'Units Sold', 'Revenue', 'Performance (%)'];
+                    $headers = ['No.', 'Product', 'Category', 'Units Sold', 'Revenue', 'Performance (%)'];
                     break;
                 case 'inventory':
                     $data = $this->inventoryReport($request)->getOriginalContent();
                     $filename = 'inventory_report';
-                    $headers = ['Product', 'Current Stock', 'Threshold', 'Status', 'Action Needed'];
+                    $headers = ['No.', 'Product', 'Current Stock', 'Threshold', 'Status', 'Action Needed'];
                     break;
                 case 'customers':
                     $data = $this->customerAnalysis($request)->getOriginalContent();
                     $filename = 'customer_analysis';
-                    $headers = ['Customer', 'Total Orders', 'Total Revenue', 'Last Order', 'Customer Value'];
+                    $headers = ['No.', 'Customer', 'Total Orders', 'Total Revenue', 'Last Order', 'Customer Value'];
                     break;
                 default:
                     return response()->json(['error' => 'Invalid report type'], 400);

@@ -85,10 +85,33 @@ class ProductController extends Controller
         }
 
         // Filter by price range
+        if ($request->filled('min_price') || $request->filled('max_price')) {
+            $minPrice = $request->filled('min_price') ? $request->min_price : 0;
+            $maxPrice = $request->filled('max_price') ? $request->max_price : PHP_FLOAT_MAX;
+
+            $query->whereBetween('price', [$minPrice, $maxPrice]);
+        }
 
         // Filter by brand
+        if ($request->filled('brand_id')) {
+            $query->where('brand_id', $request->brand_id);
+        }
 
         // Filter by stock
+        if ($request->filled('stock')) {
+            switch ($request->stock) {
+                case 'in_stock':
+                    $query->where('stock', '>', 0);
+                    break;
+                case 'low_stock':
+                    $query->where('stock', '>', 0)
+                        ->whereColumn('stock', '<=', 'low_stock_threshold');
+                    break;
+                case 'out_of_stock':
+                    $query->where('stock', '<=', 0);
+                    break;
+            }
+        }
 
         // Filter by featured
         if ($request->filled('is_featured')) {

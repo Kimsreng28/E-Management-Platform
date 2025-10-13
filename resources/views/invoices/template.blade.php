@@ -30,12 +30,58 @@
             padding: 40px 50px;
         }
 
-        h1 {
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 2px solid #e5e7eb;
+        }
+
+        .company-logo {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .logo {
+            width: 70px;
+            height: 70px;
+            object-fit: contain;
+            border-radius: 8px;
+        }
+
+        .company-info h1 {
             font-family: "Hanuman", serif;
             font-size: 32px;
             font-weight: 700;
             color: #2563eb;
-            margin: 0;
+            margin: 0 0 5px 0;
+        }
+
+        .company-info p {
+            margin: 2px 0;
+            font-size: 13px;
+            color: #6b7280;
+        }
+
+        .invoice-info {
+            text-align: right;
+        }
+
+        .invoice-info h2 {
+            font-family: "Hanuman", serif;
+            font-size: 24px;
+            font-weight: 700;
+            color: #111827;
+            margin: 0 0 10px 0;
+        }
+
+        .invoice-info p {
+            margin: 3px 0;
+            font-size: 13px;
+            color: #374151;
         }
 
         .top-info {
@@ -115,20 +161,40 @@
             text-align: center;
             font-size: 12px;
             color: #6b7280;
+            padding-top: 20px;
+            border-top: 1px solid #e5e7eb;
+        }
+
+        .contact-info {
+            margin-top: 8px;
+            font-size: 11px;
+            color: #9ca3af;
         }
     </style>
 </head>
 
 <body>
     <div class="invoice-box">
-        <div class="top-info">
-            <div>
-                <h1>INVOICE</h1>
-                <p>Invoice #: <strong>{{ $order->order_number }}</strong><br>
-                    Date: {{ $order->created_at->format('M d, Y') }}<br>
-                    Status: <strong>{{ ucfirst($order->status) }}</strong>
-                </p>
+        <!-- Header with Logo -->
+        <div class="header">
+            <div class="company-logo">
+                <img src="{{ public_path('images/logo.png') }}" alt="Company Logo" class="logo">
+                <div class="company-info">
+                    <h1>EMP Inc.</h1>
+                    <p>123 Main Street, Phnom Penh</p>
+                    <p>Email: info@emp-platform.com | Phone: +123 456 789</p>
+                </div>
             </div>
+            <div class="invoice-info">
+                <h2>INVOICE</h2>
+                <p>Invoice #: <strong>{{ $order->order_number }}</strong></p>
+                <p>Date: {{ $order->created_at->format('M d, Y') }}</p>
+                <p>Status: <strong>{{ ucfirst($order->status) }}</strong></p>
+            </div>
+        </div>
+
+        <!-- Billing and Shipping Information -->
+        <div class="top-info">
             <div>
                 <p class="section-title">Billed To</p>
                 <p>{{ $order->user->name }}<br>
@@ -155,6 +221,7 @@
             </div>
         </div>
 
+        <!-- Order Items -->
         <table>
             <thead>
                 <tr>
@@ -172,6 +239,7 @@
             </tbody>
         </table>
 
+        <!-- Order Summary -->
         <table class="summary">
             <tr>
                 <td>Subtotal:</td>
@@ -197,9 +265,13 @@
             </tr>
         </table>
 
+        <!-- Footer -->
         <div class="footer">
             Thank you for your purchase!
             <br>For support, contact us at <strong>support@example.com</strong>
+            <div class="contact-info">
+                © {{ date('Y') }} EMP Inc. All rights reserved.
+            </div>
         </div>
     </div>
 </body>

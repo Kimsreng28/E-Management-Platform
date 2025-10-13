@@ -90,4 +90,30 @@ class ReviewController extends Controller
 
         return response()->json($reviews);
     }
+
+    public function recent(Request $request)
+    {
+        try {
+            $limit = $request->get('limit', 6);
+
+            $reviews = Review::with(['user:id,name,email', 'product:id,name,slug'])
+                ->where('is_approved', true)
+                ->orderBy('created_at', 'desc')
+                ->limit($limit)
+                ->get();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Recent reviews retrieved successfully',
+                'data' => $reviews
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to retrieve recent reviews',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
 }
