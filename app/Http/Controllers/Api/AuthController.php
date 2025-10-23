@@ -18,8 +18,88 @@ use SocialiteProviders\Telegram\Provider as TelegramProvider;
 
 class AuthController extends Controller
 {
-    // Register a new user
-    public function register(Request $request){
+    // // Register a new user
+    // public function register(Request $request){
+    //     // Validate the request data
+    //     $validated = $request->validate([
+    //         'name' => 'required|string|max:255',
+    //         'email' => [
+    //             'required',
+    //             'string',
+    //             'email',
+    //             'max:255',
+    //             'unique:users',
+    //         ],
+    //         'password' => 'required|string|min:8|confirmed',
+    //         'phone' => 'nullable|string|max:15',
+    //         'role' => 'required|string|exists:roles,name',
+    //     ]);
+
+    //     // Role assignment
+    //     $role = Role::where('name', $validated['role'])->first();
+
+    //     // Create the user
+    //     $user = User::create([
+    //         'name' => $validated['name'],
+    //         'email' => $validated['email'],
+    //         'password' => bcrypt($validated['password']),
+    //         'phone' => $validated['phone'] ?? null,
+    //         'role_id' => $role->id,
+    //     ]);
+
+    //     // Token generation
+    //     $token = $user->createToken('api_token')->plainTextToken;
+
+    //     // Return the response
+    //     return response()->json([
+    //         'message' => 'User registered successfully',
+    //         'user' => $user,
+    //         'token' => $token,
+    //     ], 201);
+    // }
+
+    // // Login a user
+    // public function login(Request $request){
+    //     // Validate the request data
+    //     $validated = $request->validate([
+    //         'email' => 'required|string|email',
+    //         'phone' => 'nullable|string|max:15',
+    //         'password' => 'required|string',
+    //     ]);
+
+    //     // Require at least one of email or phone
+    //     if (empty($validated['email']) && empty($validated['phone'])) {
+    //         return response()->json(['message' => 'Either email or phone is required'], 422);
+    //     }
+
+    //     // user authentication where email or phone matches
+    //     $user = User::where(function ($query) use ($validated) {
+    //         if (!empty($validated['email'])) {
+    //             $query->where('email', $validated['email']);
+    //         }
+    //         if (!empty($validated['phone'])) {
+    //             $query->orWhere('phone', $validated['phone']);
+    //         }
+    //     })->first();
+
+    //     if (!$user || !password_verify($validated['password'], $user->password)) {
+    //         return response()->json(['message' => 'Invalid credentials'], 401);
+    //     }
+
+    //     // Token generation
+    //     $token = $user->createToken('api_token')->plainTextToken;
+
+    //     // Return the response
+    //     return response()->json([
+    //         'message' => 'User logged in successfully',
+    //         'user' => $user,
+    //         'token' => $token,
+    //     ], 200);
+    // }
+
+    // Register a new user with email verification
+    public function register(Request $request)
+    {
         // Validate the request data
         $validated = $request->validate([
             'name' => 'required|string|max:255',
@@ -45,21 +125,27 @@ class AuthController extends Controller
             'password' => bcrypt($validated['password']),
             'phone' => $validated['phone'] ?? null,
             'role_id' => $role->id,
+            'is_active' => false, // User inactive until email verified
         ]);
+
+        // Send email verification notification
+        $user->sendEmailVerificationNotification();
 
         // Token generation
         $token = $user->createToken('api_token')->plainTextToken;
 
         // Return the response
         return response()->json([
-            'message' => 'User registered successfully',
+            'message' => 'User registered successfully. Please check your email to verify your account.',
             'user' => $user,
             'token' => $token,
+            'email_verified' => false,
         ], 201);
     }
 
-    // Login a user
-    public function login(Request $request){
+    // Login with email verification check
+    public function login(Request $request)
+    {
         // Validate the request data
         $validated = $request->validate([
             'email' => 'required|string|email',
@@ -86,14 +172,29 @@ class AuthController extends Controller
             return response()->json(['message' => 'Invalid credentials'], 401);
         }
 
+        // Check if email is verified
+        if (!$user->hasVerifiedEmail()) {
+            return response()->json([
+                'message' => 'Please verify your email address before logging in.',
+                'email_verified' => false,
+                'user_id' => $user->id
+            ], 403);
+        }
+
+        // Check if user is active
+        if (!$user->is_active) {
+            return response()->json(['message' => 'Your account is inactive. Please contact support.'], 403);
+        }
+
         // Token generation
         $token = $user->createToken('api_token')->plainTextToken;
 
         // Return the response
         return response()->json([
             'message' => 'User logged in successfully',
-            'user' => $user,
+            'user' => $user->load('role'),
             'token' => $token,
+            'email_verified' => true,
         ], 200);
     }
 

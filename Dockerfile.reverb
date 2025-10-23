@@ -1,0 +1,56 @@
+# Laravel Reverb Dockerfile
+FROM php:8.2-cli
+
+# Set working directory
+WORKDIR /var/www/html
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    git \
+    curl \
+    libpng-dev \
+    libonig-dev \
+    libxml2-dev \
+    libzip-dev \
+    zip \
+    unzip \
+    libpq-dev
+
+# Clear cache
+RUN apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Install PHP extensions
+RUN docker-php-ext-configure pgsql -with-pgsql=/usr/local/pgsql
+RUN docker-php-ext-install \
+    pdo \
+    pdo_pgsql \
+    pgsql \
+    bcmath \
+    ctype \
+    mbstring \
+    tokenizer \
+    xml \
+    zip \
+    sockets
+
+# Install Composer
+COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
+
+# Copy application files
+COPY . .
+
+# Install dependencies
+RUN composer install --optimize-autoloader --no-interaction --no-dev
+
+# Set permissions
+RUN chown -R www-data:www-data storage bootstrap/cache
+
+# Expose port 8080 for Reverb
+EXPOSE 8080
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD php artisan reverb:ping || exit 1
+
+# Start Reverb
+CMD ["php", "artisan", "reverb:start", "--host=0.0.0.0", "--port=8080"]

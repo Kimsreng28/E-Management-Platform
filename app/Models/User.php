@@ -3,6 +3,8 @@
 namespace App\Models;
 
 // use Illuminate\Contracts\Auth\MustVerifyEmail;
+
+use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
@@ -14,7 +16,7 @@ use Illuminate\Support\Facades\Schema;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
-class User extends Authenticatable
+class User extends Authenticatable implements MustVerifyEmail
 {
     /** @use HasFactory<\Database\Factories\UserFactory> */
     use HasFactory, Notifiable, HasApiTokens;
@@ -205,4 +207,50 @@ class User extends Authenticatable
     {
         return $this->hasOne(DeliveryPreferences::class);
     }
+
+    public function markEmailAsVerified(): bool
+    {
+        return $this->forceFill([
+            'email_verified_at' => $this->freshTimestamp(),
+            'is_active' => true,
+        ])->save();
+    }
+
+    public function sendEmailVerificationNotification()
+    {
+        $this->notify(new \App\Notifications\VerifyEmail);
+    }
+
+    public function getEmailForVerification()
+    {
+        return $this->email;
+    }
+
+    public function hasVerifiedEmail()
+    {
+        return !is_null($this->email_verified_at);
+    }
+
+    // public function markEmailAsVerified(): bool
+    // {
+    //     return $this->forceFill([
+    //         'email_verified_at' => $this->freshTimestamp(),
+    //         'is_active' => true,
+    //     ])->save();
+    // }
+
+    // public function sendEmailVerificationNotification()
+    // {
+    //     $this->notify(new \App\Notifications\VerifyEmail);
+    // }
+
+    // public function getEmailForVerification()
+    // {
+    //     return $this->email;
+    // }
+
+    // public function hasVerifiedEmail()
+    // {
+    //     return !is_null($this->email_verified_at);
+    // }
 }

@@ -38,6 +38,7 @@ use App\Models\User;
 use App\Models\Product;
 use App\Models\Order;
 use App\Http\Controllers\Api\ContactController;
+use App\Http\Controllers\Api\EmailVerificationController;
 
 // Public Route (accessible without login or authentication)
 
@@ -167,8 +168,18 @@ Route::middleware('auth:sanctum', 'role:customer')->group(function () {
 
 });
 
+Route::get('/email/verify/{id}/{hash}', [EmailVerificationController::class, 'verify'])
+    ->name('verification.verify')
+    ->middleware(['signed']);
+
 // Routes that require any authenticated user (customer or admin)
 Route::middleware('auth:sanctum')->group(function () {
+    Route::post('/email/verification-notification', [EmailVerificationController::class, 'resend'])
+        ->name('verification.send');
+
+    Route::get('/email/verify', [EmailVerificationController::class, 'checkVerificationStatus'])
+        ->name('verification.status');
+
     // Address routes
     Route::get('/addresses', [AddressController::class, 'getAllUserAddresses']);
     Route::post('/addresses', [AddressController::class, 'createAddress']);
