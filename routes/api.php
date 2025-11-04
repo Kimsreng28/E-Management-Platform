@@ -168,14 +168,17 @@ Route::middleware('auth:sanctum', 'role:customer')->group(function () {
 
 });
 
+Route::post('/email/verification-notification', [EmailVerificationController::class, 'resend'])
+        ->name('verification.send');
+
 Route::get('/email/verify/{id}/{hash}', [EmailVerificationController::class, 'verify'])
     ->name('verification.verify')
     ->middleware(['signed']);
 
 // Routes that require any authenticated user (customer or admin)
 Route::middleware('auth:sanctum')->group(function () {
-    Route::post('/email/verification-notification', [EmailVerificationController::class, 'resend'])
-        ->name('verification.send');
+    // Route::post('/email/verification-notification', [EmailVerificationController::class, 'resend'])
+    //     ->name('verification.send');
 
     Route::get('/email/verify', [EmailVerificationController::class, 'checkVerificationStatus'])
         ->name('verification.status');
