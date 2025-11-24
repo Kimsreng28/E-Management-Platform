@@ -10,6 +10,7 @@ use Illuminate\Routing\Controller;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\Cache;
 use App\Models\BusinessSetting;
 use SimpleSoftwareIO\QrCode\Facades\QrCode;
 use App\Models\Category;
@@ -25,128 +26,181 @@ class ProductController extends Controller
     // Days to consider a product as new
     private $newProductDays = 14;
 
+    // Cache durations in seconds
+    private $cacheDurations = [
+        'product_list' => 1800, // 30 minutes
+        'product_detail' => 3600, // 1 hour
+        'product_stats' => 300, // 5 minutes
+        'popular_products' => 1800, // 30 minutes
+        'recommended_products' => 1800, // 30 minutes
+        'highly_rated_products' => 1800, // 30 minutes
+    ];
+
+    // Clear product-related caches
+    private function clearProductCaches($slug = null)
+    {
+        Cache::forget('product:stats');
+        Cache::forget('products:popular');
+        Cache::forget('products:recommended');
+        Cache::forget('products:highly_rated');
+
+        if ($slug) {
+            Cache::forget("product:{$slug}");
+        }
+
+        // Clear all product listing caches (pattern matching)
+        $keys = Cache::getRedis()->keys('*products:*');
+        foreach ($keys as $key) {
+            Cache::forget(str_replace('laravel_database_', '', $key));
+        }
+    }
+
     //Get Qr Code of Unique Product to show it detail
     public function generateProductQrCode($slug, $locale = 'en')
     {
-        $product = Product::with(['category', 'brand', 'images', 'videos'])
-            ->where('slug', $slug)
-            ->firstOrFail();
+        $cacheKey = "product:qrcode:{$slug}:{$locale}";
 
-        // base url
-        $baseUrl = env('NEXT_PUBLIC_FRONTEND_URL');
+        $qrCode = Cache::remember($cacheKey, 86400, function () use ($slug, $locale) { // 24 hours cache
+            $product = Product::with(['category', 'brand', 'images', 'videos'])
+                ->where('slug', $slug)
+                ->firstOrFail();
 
-        // Construct product URL dynamically
-        $productUrl = "{$baseUrl}/{$locale}/customer/products/{$product->slug}";
+            // base url
+            $baseUrl = env('NEXT_PUBLIC_FRONTEND_URL');
 
-        $qrCode = QrCode::size(300)
-            ->format('svg')
-            ->generate($productUrl);
+            // Validate the base URL
+            if (empty($baseUrl)) {
+                $baseUrl = 'http://localhost:3000';
+            }
+
+            // Ensure the base URL doesn't have a trailing slash
+            $baseUrl = rtrim($baseUrl, '/');
+
+            // Construct product URL dynamically
+            $productUrl = "{$baseUrl}/{$locale}/customer/products/{$product->slug}";
+
+            return QrCode::size(300)
+                ->format('svg')
+                ->generate($productUrl);
+        });
 
         return response($qrCode)->header('Content-Type', 'image/svg+xml');
     }
 
-    //Import Product
+    //Get product details via QR code
     public function getProductQrDetails($slug)
     {
-        $product = Product::with(['category', 'brand', 'images', 'videos'])
-            ->where('slug', $slug)
-            ->firstOrFail();
+        $cacheKey = "product:qrdetails:{$slug}";
 
-        return response()->json([
-            'message' => 'Product details retrieved via QR code',
-            'product' => $product,
-            'qr_scan_url' => url()->current()
-        ]);
+        $data = Cache::remember($cacheKey, $this->cacheDurations['product_detail'], function () use ($slug) {
+            $product = Product::with(['category', 'brand', 'images', 'videos'])
+                ->where('slug', $slug)
+                ->firstOrFail();
+
+            return [
+                'message' => 'Product details retrieved via QR code',
+                'product' => $product,
+                'qr_scan_url' => url()->current()
+            ];
+        });
+
+        return response()->json($data);
     }
 
     //Get all products with category, brand, images, and videos
     public function getAllProducts(Request $request)
     {
-        $query = Product::with(['category', 'brand', 'images', 'videos']);
+        $cacheKey = 'products:' . md5(serialize($request->all()));
 
-        // Search (by name, model_code, description, barcode)
-        if ($request->filled('search')) {
-            $search = $request->search;
-            $query->where(function ($q) use ($search) {
-                $q->where('name', 'ILIKE', "%{$search}%")
-                ->orWhere('model_code', 'ILIKE', "%{$search}%")
-                ->orWhere('description', 'ILIKE', "%{$search}%");
-            });
-        }
+        $products = Cache::remember($cacheKey, $this->cacheDurations['product_list'], function () use ($request) {
+            $query = Product::with(['category', 'brand', 'images', 'videos']);
 
-        // Filter by Status
-        if ($request->filled('status')) {
-            $query->where('stock_status', $request->status);
-        }
-
-        // Filter by category
-        if ($request->filled('category_id')) {
-            $query->where('category_id', $request->category_id);
-        }
-
-        // Filter by price range
-        if ($request->filled('min_price') || $request->filled('max_price')) {
-            $minPrice = $request->filled('min_price') ? $request->min_price : 0;
-            $maxPrice = $request->filled('max_price') ? $request->max_price : PHP_FLOAT_MAX;
-
-            $query->whereBetween('price', [$minPrice, $maxPrice]);
-        }
-
-        // Filter by brand
-        if ($request->filled('brand_id')) {
-            $query->where('brand_id', $request->brand_id);
-        }
-
-        // Filter by stock
-        if ($request->filled('stock')) {
-            switch ($request->stock) {
-                case 'in_stock':
-                    $query->where('stock', '>', 0);
-                    break;
-                case 'low_stock':
-                    $query->where('stock', '>', 0)
-                        ->whereColumn('stock', '<=', 'low_stock_threshold');
-                    break;
-                case 'out_of_stock':
-                    $query->where('stock', '<=', 0);
-                    break;
+            // Search (by name, model_code, description, barcode)
+            if ($request->filled('search')) {
+                $search = $request->search;
+                $query->where(function ($q) use ($search) {
+                    $q->where('name', 'ILIKE', "%{$search}%")
+                    ->orWhere('model_code', 'ILIKE', "%{$search}%")
+                    ->orWhere('description', 'ILIKE', "%{$search}%");
+                });
             }
-        }
 
-        // Filter by featured
-        if ($request->filled('is_featured')) {
-            $query->where('is_featured', $request->is_featured);
-        }
+            // Filter by Status
+            if ($request->filled('status')) {
+                $query->where('stock_status', $request->status);
+            }
 
-        // Filter by is_new
-        if ($request->filled('is_new')) {
-            $query->where('created_at', '>=', now()->subDays($this->newProductDays));
-        }
+            // Filter by category
+            if ($request->filled('category_id')) {
+                $query->where('category_id', $request->category_id);
+            }
 
-        // Sorting
-        $sortBy = $request->get('sort_by', 'created_at'); // default sort column
-        $sortOrder = $request->get('sort_order', 'desc'); // default order
-        $allowedSorts = ['name', 'price', 'stock', 'created_at'];
-        if (in_array($sortBy, $allowedSorts)) {
-            $query->orderBy($sortBy, $sortOrder);
-        }
+            // Filter by price range
+            if ($request->filled('min_price') || $request->filled('max_price')) {
+                $minPrice = $request->filled('min_price') ? $request->min_price : 0;
+                $maxPrice = $request->filled('max_price') ? $request->max_price : PHP_FLOAT_MAX;
 
-        // Pagination
-        $perPage = $request->get('per_page', 10); // default 10 per page
-        $products = $query->paginate($perPage);
+                $query->whereBetween('price', [$minPrice, $maxPrice]);
+            }
 
-        // discount_price and is_new
-        $products->getCollection()->transform(function ($product) {
-            $product->discount = $product->discount ? (int) round($product->discount) : 0;
-            $product->discount_price = round($product->price * (1 - ($product->discount / 100)), 2);
-            $product->is_new = $product->created_at >= now()->subDays($this->newProductDays);
+            // Filter by brand
+            if ($request->filled('brand_id')) {
+                $query->where('brand_id', $request->brand_id);
+            }
 
-            // Rating info
-            $avg = $product->reviews()->avg('rating') ?? 0;
-            $product->average_rating = round((float) $avg, 1);
-            $product->total_ratings = $product->totalRatings();
+            // Filter by stock
+            if ($request->filled('stock')) {
+                switch ($request->stock) {
+                    case 'in_stock':
+                        $query->where('stock', '>', 0);
+                        break;
+                    case 'low_stock':
+                        $query->where('stock', '>', 0)
+                            ->whereColumn('stock', '<=', 'low_stock_threshold');
+                        break;
+                    case 'out_of_stock':
+                        $query->where('stock', '<=', 0);
+                        break;
+                }
+            }
 
-            return $product;
+            // Filter by featured
+            if ($request->filled('is_featured')) {
+                $query->where('is_featured', $request->is_featured);
+            }
+
+            // Filter by is_new
+            if ($request->filled('is_new')) {
+                $query->where('created_at', '>=', now()->subDays($this->newProductDays));
+            }
+
+            // Sorting
+            $sortBy = $request->get('sort_by', 'created_at'); // default sort column
+            $sortOrder = $request->get('sort_order', 'desc'); // default order
+            $allowedSorts = ['name', 'price', 'stock', 'created_at'];
+            if (in_array($sortBy, $allowedSorts)) {
+                $query->orderBy($sortBy, $sortOrder);
+            }
+
+            // Pagination
+            $perPage = $request->get('per_page', 10); // default 10 per page
+            $paginatedProducts = $query->paginate($perPage);
+
+            // Transform products with calculated fields
+            $paginatedProducts->getCollection()->transform(function ($product) {
+                $product->discount = $product->discount ? (int) round($product->discount) : 0;
+                $product->discount_price = round($product->price * (1 - ($product->discount / 100)), 2);
+                $product->is_new = $product->created_at >= now()->subDays($this->newProductDays);
+
+                // Rating info
+                $avg = $product->reviews()->avg('rating') ?? 0;
+                $product->average_rating = round((float) $avg, 1);
+                $product->total_ratings = $product->totalRatings();
+
+                return $product;
+            });
+
+            return $paginatedProducts;
         });
 
         return response()->json($products);
@@ -235,10 +289,6 @@ class ProductController extends Controller
             'barcode'           => $request->barcode ?? Product::generateUniqueBarcode(),
         ]);
 
-        // Calculate discount price
-        // $product->discount_price = round($product->price * (1 - ($product->discount / 100)), 2);
-        // $product->save();
-
         // Save product images
         if ($request->hasFile('images')) {
             foreach ($request->file('images') as $index => $file) {
@@ -269,6 +319,9 @@ class ProductController extends Controller
             }
         }
 
+        // Clear relevant caches
+        $this->clearProductCaches();
+
         $product->is_new = $product->created_at >= now()->subDays($this->newProductDays);
         $discountPrice = round($product->price * (1 - ($product->discount / 100)), 2);
 
@@ -284,66 +337,76 @@ class ProductController extends Controller
      */
     public function exportProducts(Request $request)
     {
-        $query = Product::with(['category', 'brand']);
+        $cacheKey = 'products:export:' . md5(serialize($request->all()));
 
-        // Apply filters if any
-        if ($request->filled('category_id')) {
-            $query->where('category_id', $request->category_id);
-        }
+        $csvContent = Cache::remember($cacheKey, 300, function () use ($request) { // 5 minutes cache
+            $query = Product::with(['category', 'brand']);
 
-        if ($request->filled('brand_id')) {
-            $query->where('brand_id', $request->brand_id);
-        }
+            // Apply filters if any
+            if ($request->filled('category_id')) {
+                $query->where('category_id', $request->category_id);
+            }
 
-        if ($request->filled('is_active')) {
-            $query->where('is_active', $request->is_active);
-        }
+            if ($request->filled('brand_id')) {
+                $query->where('brand_id', $request->brand_id);
+            }
 
-        $products = $query->get();
+            if ($request->filled('is_active')) {
+                $query->where('is_active', $request->is_active);
+            }
 
-        // Check if any products exist
-        if ($products->isEmpty()) {
+            $products = $query->get();
+
+            // Check if any products exist
+            if ($products->isEmpty()) {
+                return null;
+            }
+
+            // Create CSV
+            $csv = Writer::createFromFileObject(new SplTempFileObject());
+            $csv->insertOne([
+                'Name', 'Model Code', 'Barcode', 'Slug', 'Stock', 'Price', 'Cost Price',
+                'Discount', 'Short Description', 'Description', 'Category', 'Brand',
+                'Warranty Months', 'Is Featured', 'Is Active', 'Specifications',
+                'Low Stock Threshold', 'Stock Status'
+            ]);
+
+            foreach ($products as $product) {
+                $csv->insertOne([
+                    $product->name,
+                    $product->model_code,
+                    $product->barcode,
+                    $product->slug,
+                    $product->stock,
+                    $product->price,
+                    $product->cost_price,
+                    $product->discount,
+                    $product->short_description,
+                    $product->description,
+                    $product->category->name ?? '',
+                    $product->brand->name ?? '',
+                    $product->warranty_months,
+                    $product->is_featured ? 'Yes' : 'No',
+                    $product->is_active ? 'Yes' : 'No',
+                    json_encode($product->specifications),
+                    $product->low_stock_threshold,
+                    $product->stock_status,
+                ]);
+            }
+
+            return (string) $csv;
+        });
+
+        if (!$csvContent) {
             return response()->json([
                 'message' => 'No products found for export',
                 'error' => 'No products match the specified criteria'
             ], 404);
         }
 
-        // Create CSV
-        $csv = Writer::createFromFileObject(new SplTempFileObject());
-        $csv->insertOne([
-            'Name', 'Model Code', 'Barcode', 'Slug', 'Stock', 'Price', 'Cost Price',
-            'Discount', 'Short Description', 'Description', 'Category', 'Brand',
-            'Warranty Months', 'Is Featured', 'Is Active', 'Specifications',
-            'Low Stock Threshold', 'Stock Status'
-        ]);
-
-        foreach ($products as $product) {
-            $csv->insertOne([
-                $product->name,
-                $product->model_code,
-                $product->barcode,
-                $product->slug,
-                $product->stock,
-                $product->price,
-                $product->cost_price,
-                $product->discount,
-                $product->short_description,
-                $product->description,
-                $product->category->name ?? '',
-                $product->brand->name ?? '',
-                $product->warranty_months,
-                $product->is_featured ? 'Yes' : 'No',
-                $product->is_active ? 'Yes' : 'No',
-                json_encode($product->specifications),
-                $product->low_stock_threshold,
-                $product->stock_status,
-            ]);
-        }
-
         $filename = 'products_export_' . date('Y-m-d_H-i-s') . '.csv';
 
-        return response((string) $csv, 200, [
+        return response($csvContent, 200, [
             'Content-Type' => 'text/csv',
             'Content-Disposition' => 'attachment; filename="' . $filename . '"',
         ]);
@@ -438,6 +501,11 @@ class ProductController extends Controller
             }
         }
 
+        // Clear caches after import
+        if ($imported > 0) {
+            $this->clearProductCaches();
+        }
+
         return response()->json([
             'message' => 'Import completed',
             'imported' => $imported,
@@ -451,23 +519,29 @@ class ProductController extends Controller
      */
     public function generateBarcode($slug)
     {
-        $product = Product::where('slug', $slug)->firstOrFail();
+        $cacheKey = "product:barcode:{$slug}";
 
-        if (!$product->barcode) {
-            $product->barcode = Product::generateUniqueBarcode();
-            $product->save();
-        }
+        $barcodeData = Cache::remember($cacheKey, 86400, function () use ($slug) { // 24 hours cache
+            $product = Product::where('slug', $slug)->firstOrFail();
 
-        // Generate base64 barcode (Code128)
-        $barcode = new DNS1D();
-        $barcode->setStorPath(storage_path('products/barcodes/'));
+            if (!$product->barcode) {
+                $product->barcode = Product::generateUniqueBarcode();
+                $product->save();
+            }
 
-        $barcodeBase64 = $barcode->getBarcodePNG($product->barcode, 'C128', 3, 100);
+            // Generate base64 barcode (Code128)
+            $barcode = new DNS1D();
+            $barcode->setStorPath(storage_path('products/barcodes/'));
 
-        return response()->json([
-            'barcode' => $product->barcode,
-            'image'   => 'data:image/png;base64,' . $barcodeBase64,
-        ]);
+            $barcodeBase64 = $barcode->getBarcodePNG($product->barcode, 'C128', 3, 100);
+
+            return [
+                'barcode' => $product->barcode,
+                'image'   => 'data:image/png;base64,' . $barcodeBase64,
+            ];
+        });
+
+        return response()->json($barcodeData);
     }
 
     /**
@@ -475,10 +549,15 @@ class ProductController extends Controller
      */
     public function getProductByBarcode($barcode)
     {
-        $product = Product::with(['category', 'brand', 'images', 'videos'])
-            ->where('barcode', $barcode)
-            ->firstOrFail();
+        $cacheKey = "product:barcode:{$barcode}";
 
+        $product = Cache::remember($cacheKey, $this->cacheDurations['product_detail'], function () use ($barcode) {
+            return Product::with(['category', 'brand', 'images', 'videos'])
+                ->where('barcode', $barcode)
+                ->firstOrFail();
+        });
+
+        // Calculate dynamic fields (not cached)
         $product->discount_price = round($product->price * (1 - ($product->discount / 100)), 2);
         $product->is_new = $product->created_at >= now()->subDays($this->newProductDays);
 
@@ -495,15 +574,22 @@ class ProductController extends Controller
      */
     public function getProduct($slug)
     {
-        $product = Product::with(['category', 'brand', 'images', 'videos', 'orders.shippingAddress'])->where('slug', $slug)->firstOrFail();
+        $cacheKey = "product:{$slug}";
+
+        $product = Cache::remember($cacheKey, $this->cacheDurations['product_detail'], function () use ($slug) {
+            return Product::with(['category', 'brand', 'images', 'videos', 'orders.shippingAddress'])
+                ->where('slug', $slug)
+                ->firstOrFail();
+        });
+
+        // Calculate dynamic fields (not cached as they change frequently)
         $product->discount_price = round($product->price * (1 - ($product->discount / 100)), 2);
         $product->is_new = $product->created_at >= now()->subDays($this->newProductDays);
 
-        // rating info
         // Rating info
-            $avg = $product->reviews()->avg('rating') ?? 0;
-            $product->average_rating = round((float) $avg, 1);
-            $product->total_ratings = $product->totalRatings();
+        $avg = $product->reviews()->avg('rating') ?? 0;
+        $product->average_rating = round((float) $avg, 1);
+        $product->total_ratings = $product->totalRatings();
 
         return response()->json($product);
     }
@@ -646,6 +732,12 @@ class ProductController extends Controller
 
         $product->update($data);
 
+        // Clear relevant caches
+        $this->clearProductCaches($slug);
+        if (isset($data['slug'])) {
+            $this->clearProductCaches($data['slug']);
+        }
+
         return response()->json([
             'message' => 'Product updated successfully',
             'product' => $product->fresh()->load(['images', 'videos', 'category', 'brand'])
@@ -659,13 +751,19 @@ class ProductController extends Controller
     {
         $product = Product::where('slug', $slug)->firstOrFail();
         $product->forceDelete();
+
+        // Clear relevant caches
+        $this->clearProductCaches($slug);
+
         return response()->json(['message' => 'Product deleted successfully']);
     }
 
     public function getProductStats()
     {
-        try {
-            $stats = [
+        $cacheKey = 'product:stats';
+
+        $stats = Cache::remember($cacheKey, $this->cacheDurations['product_stats'], function () {
+            return [
                 'total_products' => Product::query()->count(),
                 'active_products' => Product::where('is_active', true)->count(),
                 'low_stock_products' => Product::where('stock', '>', 0)
@@ -673,32 +771,30 @@ class ProductController extends Controller
                     ->count(),
                 'out_of_stock_products' => Product::where('stock', '<=', 0)->count(),
             ];
+        });
 
-            return response()->json($stats);
-
-        } catch (\Exception $e) {
-            return response()->json([
-                'error' => 'Failed to fetch stats',
-                'message' => $e->getMessage()
-            ], 500);
-        }
+        return response()->json($stats);
     }
 
     public function getByCategory(Request $request, $categoryId)
     {
-        $query = Product::with(['category', 'brand', 'images'])
-            ->where('category_id', $categoryId)
-            ->where('is_active', true);
+        $cacheKey = "products:category:{$categoryId}:" . md5(serialize($request->all()));
 
-        if ($request->has('exclude')) {
-            $query->where('id', '!=', $request->exclude);
-        }
+        $products = Cache::remember($cacheKey, $this->cacheDurations['product_list'], function () use ($request, $categoryId) {
+            $query = Product::with(['category', 'brand', 'images'])
+                ->where('category_id', $categoryId)
+                ->where('is_active', true);
 
-        if ($request->has('limit')) {
-            $query->limit($request->limit);
-        }
+            if ($request->has('exclude')) {
+                $query->where('id', '!=', $request->exclude);
+            }
 
-        $products = $query->get();
+            if ($request->has('limit')) {
+                $query->limit($request->limit);
+            }
+
+            return $query->get();
+        });
 
         return response()->json($products);
     }
@@ -707,9 +803,13 @@ class ProductController extends Controller
     public function getPopularProducts(Request $request)
     {
         $limit = $request->get('limit', 10);
-        $products = Product::popular($limit)->with(['images', 'category', 'brand'])->get();
+        $cacheKey = "products:popular:{$limit}";
 
-        // Add calculated fields
+        $products = Cache::remember($cacheKey, $this->cacheDurations['popular_products'], function () use ($limit) {
+            return Product::popular($limit)->with(['images', 'category', 'brand'])->get();
+        });
+
+        // Add calculated fields (not cached as they change frequently)
         $products->transform(function ($product) {
             $product->discount_price = round($product->price * (1 - ($product->discount / 100)), 2);
             $product->is_new = $product->created_at >= now()->subDays($this->newProductDays);
@@ -730,8 +830,17 @@ class ProductController extends Controller
     {
         $limit = $request->get('limit', 10);
         $categoryId = $request->get('category_id');
+        $cacheKey = "products:recommended:{$categoryId}:{$limit}";
 
-        $products = Product::recommended($categoryId, $limit)->with(['images', 'category', 'brand'])->get();
+        $products = Cache::remember($cacheKey, $this->cacheDurations['recommended_products'], function () use ($categoryId, $limit) {
+            $products = Product::recommended($categoryId, $limit)->with(['images', 'category', 'brand'])->get();
+
+            if ($products->isEmpty()) {
+                return collect([]);
+            }
+
+            return $products;
+        });
 
         if ($products->isEmpty()) {
             return response()->json([
@@ -760,8 +869,11 @@ class ProductController extends Controller
     {
         $limit = $request->get('limit', 10);
         $minRating = $request->get('min_rating', 4);
+        $cacheKey = "products:highly_rated:{$minRating}:{$limit}";
 
-        $products = Product::highlyRated($minRating, $limit)->with(['images', 'category', 'brand'])->get();
+        $products = Cache::remember($cacheKey, $this->cacheDurations['highly_rated_products'], function () use ($minRating, $limit) {
+            return Product::highlyRated($minRating, $limit)->with(['images', 'category', 'brand'])->get();
+        });
 
         // Add calculated fields
         $products->transform(function ($product) {
@@ -787,9 +899,13 @@ class ProductController extends Controller
             return response()->json(['message' => 'Unauthorized'], 401);
         }
 
-        $products = Product::reviewedByUser($user->id)
-            ->with(['category', 'brand', 'images'])
-            ->get();
+        $cacheKey = "products:user_reviewed:{$user->id}";
+
+        $products = Cache::remember($cacheKey, 1800, function () use ($user) { // 30 minutes cache
+            return Product::reviewedByUser($user->id)
+                ->with(['category', 'brand', 'images'])
+                ->get();
+        });
 
         // Add calculated fields
         $products->transform(function ($product) {

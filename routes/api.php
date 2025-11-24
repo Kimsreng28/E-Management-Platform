@@ -215,6 +215,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('payments/{payment}', [PaymentController::class, 'show']);
     Route::put('payments/{payment}', [PaymentController::class, 'update']);
     Route::delete('payments/{payment}', [PaymentController::class, 'destroy']);
+    Route::post('/payments/check-khqr-status', [PaymentController::class, 'checkKhqrPaymentStatus']);
 
     // Cart
     Route::get('cart', [CartController::class, 'getCart']);

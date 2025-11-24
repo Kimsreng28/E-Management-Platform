@@ -31,7 +31,7 @@ class ChatController extends Controller
             $request->validate([
                 'body' => 'required_without:attachment|string|nullable',
                 'type' => 'sometimes|in:text,image,video,voice',
-                'attachment' => 'sometimes|file|mimes:jpg,jpeg,png,mp4,mov,avi,mp3,wav,m4a,ogg,webm|max:10240', // 10MB max
+                'attachment' => 'sometimes|file|mimes:jpg,jpeg,png,mp4,mov,avi,mp3,wav,m4a,ogg,webm,webp|max:10240', // 10MB max
                 'duration' => 'required_if:type,voice|numeric|nullable' // Duration in seconds for voice chat
             ]);
 

@@ -2,95 +2,144 @@
 
 namespace App\Http\Controllers\Api;
 
-
 use App\Models\Category;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Str;
 
 class CategoryController extends Controller
 {
+    // Cache durations in seconds
+    private $cacheDurations = [
+        'category_stats' => 300, // 5 minutes
+        'category_list' => 1800, // 30 minutes
+        'category_detail' => 3600, // 1 hour
+        'featured_categories' => 1800, // 30 minutes
+        'category_products' => 1800, // 30 minutes
+    ];
+
+    // Clear category-related caches
+    private function clearCategoryCaches($slug = null)
+    {
+        Cache::forget('category:stats');
+        Cache::forget('categories:featured');
+        Cache::forget('categories:list');
+
+        if ($slug) {
+            Cache::forget("category:{$slug}");
+            Cache::forget("category:products:{$slug}");
+        }
+
+        // Clear all category listing caches
+        $keys = Cache::getRedis()->keys('*categories:*');
+        foreach ($keys as $key) {
+            Cache::forget(str_replace('laravel_database_', '', $key));
+        }
+
+        // Also clear product caches since they might be affected
+        $productKeys = Cache::getRedis()->keys('*products:*');
+        foreach ($productKeys as $key) {
+            Cache::forget(str_replace('laravel_database_', '', $key));
+        }
+    }
+
     // Get stats
     public function stats()
     {
-        $totalProducts = \App\Models\Product::count();
-        $totalCategories = \App\Models\Category::count();
-        $totalBrands = \App\Models\Brand::count(); // assuming you have a Brand model
-        $support = "24/7"; // static for now
+        $cacheKey = 'category:stats';
 
-        return response()->json([
-            'success' => true,
-            'data' => [
+        $data = Cache::remember($cacheKey, $this->cacheDurations['category_stats'], function () {
+            $totalProducts = \App\Models\Product::count();
+            $totalCategories = \App\Models\Category::count();
+            $totalBrands = \App\Models\Brand::count();
+            $support = "24/7";
+
+            return [
                 'totalProducts' => $totalProducts,
                 'totalCategories' => $totalCategories,
                 'totalBrands' => $totalBrands,
                 'support' => $support,
-            ]
+            ];
+        });
+
+        return response()->json([
+            'success' => true,
+            'data' => $data
         ]);
     }
 
     // Display a listing of categories.
     public function index(Request $request)
     {
-        $query = Category::query()->with('parent');
+        $cacheKey = 'categories:list:' . md5(serialize($request->all()));
 
-        // Search functionality
-        if ($request->has('search') && !empty($request->search)) {
-            $search = $request->search;
-            $query->where(function($q) use ($search) {
-                $q->where('name', 'like', "%{$search}%")
-                  ->orWhere('description', 'like', "%{$search}%")
-                  ->orWhereHas('parent', function($q) use ($search) {
-                      $q->where('name', 'like', "%{$search}%");
-                  });
+        $result = Cache::remember($cacheKey, $this->cacheDurations['category_list'], function () use ($request) {
+            $query = Category::query()->with('parent');
+
+            // Search functionality
+            if ($request->has('search') && !empty($request->search)) {
+                $search = $request->search;
+                $query->where(function($q) use ($search) {
+                    $q->where('name', 'like', "%{$search}%")
+                      ->orWhere('description', 'like', "%{$search}%")
+                      ->orWhereHas('parent', function($q) use ($search) {
+                          $q->where('name', 'like', "%{$search}%");
+                      });
+                });
+            }
+
+            // Sorting
+            $sortField = $request->get('sortField', 'order');
+            $sortDirection = $request->get('sortDirection', 'asc');
+
+            // Handle special sorting cases
+            if ($sortField === 'parent_name') {
+                $query->leftJoin('categories as parent', 'categories.parent_id', '=', 'parent.id')
+                      ->orderBy('parent.name', $sortDirection)
+                      ->select('categories.*');
+            } else {
+                $query->orderBy($sortField, $sortDirection);
+            }
+
+            // Pagination
+            $perPage = (int) $request->get('perPage', 10);
+            $categories = $query->paginate($perPage);
+
+            // Transform data
+            $categories->getCollection()->transform(function ($category) {
+                return [
+                    'id' => $category->id,
+                    'name' => $category->name,
+                    'slug' => $category->slug,
+                    'description' => $category->description,
+                    'image' => $category->image,
+                    'parent_id' => $category->parent_id,
+                    'parent_name' => $category->parent ? $category->parent->name : null,
+                    "products_count" => $category->products()->count(),
+                    'order' => $category->order,
+                    'is_featured' => $category->is_featured,
+                    'created_at' => $category->created_at,
+                    'updated_at' => $category->updated_at,
+                ];
             });
-        }
 
-        // Sorting
-        $sortField = $request->get('sortField', 'order');
-        $sortDirection = $request->get('sortDirection', 'asc');
-
-        // Handle special sorting cases
-        if ($sortField === 'parent_name') {
-            $query->leftJoin('categories as parent', 'categories.parent_id', '=', 'parent.id')
-                  ->orderBy('parent.name', $sortDirection)
-                  ->select('categories.*');
-        } else {
-            $query->orderBy($sortField, $sortDirection);
-        }
-
-        // Pagination
-        $perPage = (int) $request->get('perPage', 10);
-        $categories = $query->paginate($perPage);
-
-        // Transform data
-        $categories->getCollection()->transform(function ($category) {
             return [
-                'id' => $category->id,
-                'name' => $category->name,
-                'slug' => $category->slug,
-                'description' => $category->description,
-                'image' => $category->image,
-                'parent_id' => $category->parent_id,
-                'parent_name' => $category->parent ? $category->parent->name : null,
-                "products_count" => $category->products()->count(),
-                'order' => $category->order,
-                'is_featured' => $category->is_featured,
-                'created_at' => $category->created_at,
-                'updated_at' => $category->updated_at,
+                'data' => $categories->items(),
+                'pagination' => [
+                    'total' => $categories->total(),
+                    'perPage' => $categories->perPage(),
+                    'currentPage' => $categories->currentPage(),
+                    'lastPage' => $categories->lastPage(),
+                ],
             ];
         });
 
         return response()->json([
             'success' => true,
-            'data' => $categories->items(),
-            'pagination' => [
-                'total' => $categories->total(),
-                'perPage' => $categories->perPage(),
-                'currentPage' => $categories->currentPage(),
-                'lastPage' => $categories->lastPage(),
-            ],
+            'data' => $result['data'],
+            'pagination' => $result['pagination'],
         ]);
     }
 
@@ -127,6 +176,9 @@ class CategoryController extends Controller
 
         $category = Category::create($data);
 
+        // Clear relevant caches
+        $this->clearCategoryCaches();
+
         return response()->json([
             'success' => true,
             'data' => $category->load('parent')
@@ -136,9 +188,13 @@ class CategoryController extends Controller
     // Display the specified category.
     public function show($slug)
     {
-        $category = Category::with(['parent', 'children', 'products'])
-            ->where('slug', $slug)
-            ->first();
+        $cacheKey = "category:{$slug}";
+
+        $category = Cache::remember($cacheKey, $this->cacheDurations['category_detail'], function () use ($slug) {
+            return Category::with(['parent', 'children', 'products'])
+                ->where('slug', $slug)
+                ->first();
+        });
 
         if (!$category) {
             return response()->json([
@@ -191,12 +247,19 @@ class CategoryController extends Controller
             $data['image'] = url('storage/' . $path);
         }
 
-        // Only regenerate slug if explicitly provided
-        if (isset($data['slug'])) {
-            $data['slug'] = Str::slug($data['slug']);
+        // Only regenerate slug if name is provided
+        if (isset($data['name'])) {
+            $data['slug'] = Str::slug($data['name']);
         }
 
+        $oldSlug = $category->slug;
         $category->update($data);
+
+        // Clear relevant caches
+        $this->clearCategoryCaches($oldSlug);
+        if (isset($data['slug']) && $data['slug'] !== $oldSlug) {
+            $this->clearCategoryCaches($data['slug']);
+        }
 
         return response()->json([
             'success' => true,
@@ -234,20 +297,26 @@ class CategoryController extends Controller
         // Soft delete the category
         $category->forceDelete();
 
+        // Clear relevant caches
+        $this->clearCategoryCaches($slug);
+
         return response()->json([
             'success' => true,
             'message' => 'Category and its associated products deleted successfully'
         ]);
     }
 
-
     // Get featured categories
     public function featured()
     {
-        $categories = Category::with(['parent'])
-            ->where('is_featured', true)
-            ->orderBy('order')
-            ->get();
+        $cacheKey = 'categories:featured';
+
+        $categories = Cache::remember($cacheKey, $this->cacheDurations['featured_categories'], function () {
+            return Category::with(['parent'])
+                ->where('is_featured', true)
+                ->orderBy('order')
+                ->get();
+        });
 
         return response()->json([
             'success' => true,
@@ -258,42 +327,57 @@ class CategoryController extends Controller
     // Get product by category
     public function products($slug, Request $request)
     {
-        $category = Category::where('slug', $slug)->first();
+        $cacheKey = "category:products:{$slug}:" . md5(serialize($request->all()));
 
-        if (!$category) {
+        $result = Cache::remember($cacheKey, $this->cacheDurations['category_products'], function () use ($slug, $request) {
+            $category = Category::where('slug', $slug)->first();
+
+            if (!$category) {
+                return [
+                    'success' => false,
+                    'message' => 'Category not found',
+                    'status' => 404
+                ];
+            }
+
+            $query = $category->products()->with('brand', 'images', 'videos');
+
+            // Optional: search filter
+            if ($request->has('search') && !empty($request->search)) {
+                $search = $request->search;
+                $query->where('name', 'like', "%{$search}%")
+                    ->orWhere('description', 'like', "%{$search}%");
+            }
+
+            // Sorting (default newest first)
+            $sortField = $request->get('sortField', 'created_at');
+            $sortDirection = $request->get('sortDirection', 'desc');
+            $query->orderBy($sortField, $sortDirection);
+
+            // Pagination
+            $perPage = (int) $request->get('perPage', 10);
+            $products = $query->paginate($perPage);
+
+            return [
+                'success' => true,
+                'data' => $products->items(),
+                'pagination' => [
+                    'total' => $products->total(),
+                    'perPage' => $products->perPage(),
+                    'currentPage' => $products->currentPage(),
+                    'lastPage' => $products->lastPage(),
+                ]
+            ];
+        });
+
+        // Handle cached error response
+        if (isset($result['status']) && $result['status'] === 404) {
             return response()->json([
                 'success' => false,
-                'message' => 'Category not found'
+                'message' => $result['message']
             ], 404);
         }
 
-        $query = $category->products()->with('brand', 'images', 'videos');
-
-        // Optional: search filter
-        if ($request->has('search') && !empty($request->search)) {
-            $search = $request->search;
-            $query->where('name', 'like', "%{$search}%")
-                ->orWhere('description', 'like', "%{$search}%");
-        }
-
-        // Sorting (default newest first)
-        $sortField = $request->get('sortField', 'created_at');
-        $sortDirection = $request->get('sortDirection', 'desc');
-        $query->orderBy($sortField, $sortDirection);
-
-        // Pagination
-        $perPage = (int) $request->get('perPage', 10);
-        $products = $query->paginate($perPage);
-
-        return response()->json([
-            'success' => true,
-            'data' => $products->items(),
-            'pagination' => [
-                'total' => $products->total(),
-                'perPage' => $products->perPage(),
-                'currentPage' => $products->currentPage(),
-                'lastPage' => $products->lastPage(),
-            ]
-        ]);
+        return response()->json($result);
     }
 }

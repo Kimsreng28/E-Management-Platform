@@ -84,4 +84,27 @@ class Order extends Model
     {
         return $this->hasOne(Delivery::class);
     }
+
+    // get total successfully order
+    public function getSuccessfulOrdersCount()
+    {
+        return $this->products()
+            ->join('order_items', 'products.id', '=', 'order_items.product_id')
+            ->join('orders', 'order_items.order_id', '=', 'orders.id')
+            ->whereIn('orders.status', ['completed', 'delivered', 'shipped'])
+            ->count();
+    }
+
+    // update order base on the successful order
+    public function updateOrderFromOrders()
+    {
+        $successfulOrdersCount = $this->getSuccessfulOrdersCount();
+        $this->update(['order' => $successfulOrdersCount]);
+    }
+
+    // scope to order by successful order
+    public function scopeOrderByPopularity($query)
+    {
+        return $query->orderBy('order', 'desc');
+    }
 }
