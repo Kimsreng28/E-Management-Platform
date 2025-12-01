@@ -79,8 +79,344 @@ class NotificationService
             $this->sendAdminOrderNotification($admin, $order);
         });
 
-        // 4) Telegram notifications
+        // 4) Vendor Notifications
+        $this->notifyVendorsForOrder($order);
+
+        // 5) Telegram notifications
         $this->sendOrderTelegramNotifications($order);
+    }
+
+    /** Notify vendors about new orders containing their products */
+    protected function notifyVendorsForOrder(Order $order): void
+    {
+        // Get unique vendors from order items
+        $vendors = [];
+
+        foreach ($order->items as $item) {
+            if ($item->product && $item->product->vendor) {
+                $vendor = $item->product->vendor;
+                $vendorId = $vendor->id;
+
+                if (!isset($vendors[$vendorId])) {
+                    $vendors[$vendorId] = [
+                        'vendor' => $vendor,
+                        'items' => []
+                    ];
+                }
+
+                $vendors[$vendorId]['items'][] = $item;
+            }
+        }
+
+        // Notify each vendor
+        foreach ($vendors as $vendorData) {
+            $vendor = $vendorData['vendor'];
+            $vendorItems = $vendorData['items'];
+
+            // Database notification for vendor
+            $notification = $vendor->notifications()->create([
+                'type' => 'order_created_vendor',
+                'data' => [
+                    'title' => '📦 New Order for Your Products',
+                    'message' => "You have new order #{$order->order_number} containing your products",
+                    'order_id' => $order->id,
+                    'order_number' => $order->order_number,
+                    'customer_name' => $order->user->name,
+                    'customer_email' => $order->user->email,
+                    'items_count' => count($vendorItems),
+                    'total_items_value' => collect($vendorItems)->sum('total_price'),
+                    'status' => $order->status,
+                ],
+                'read_at' => null,
+            ]);
+
+            // Trigger event
+            event(new NotificationCreated($notification));
+
+            // Vendor email
+            $this->sendVendorOrderNotification($vendor, $order, $vendorItems);
+
+            // Vendor Telegram
+            $this->sendVendorTelegramNotification($vendor, $order, $vendorItems);
+        }
+    }
+
+    /** Send order notification email to vendor */
+    protected function sendVendorOrderNotification(User $vendor, Order $order, array $vendorItems): void
+    {
+        $subject = "New Order #{$order->order_number} - Your Products";
+
+        $itemsHtml = '';
+        $totalValue = 0;
+
+        foreach ($vendorItems as $item) {
+            $itemTotal = $item->unit_price * $item->quantity;
+            $totalValue += $itemTotal;
+            $itemsHtml .= "<li>{$item->product_name} (Qty: {$item->quantity}) - $" . number_format($item->unit_price, 2) . " each = $" . number_format($itemTotal, 2) . "</li>";
+        }
+
+        $emailContent = "
+            <h2>📦 New Order for Your Products</h2>
+            <p>Hello {$vendor->name},</p>
+            <p>You have received a new order containing your products.</p>
+            <p><b>Order Details:</b></p>
+            <p>Order #: <b>{$order->order_number}</b></p>
+            <p>Customer: {$order->user->name} ({$order->user->email})</p>
+            <p><b>Your Products in this Order:</b></p>
+            <ul>{$itemsHtml}</ul>
+            <p><b>Total Value of Your Products:</b> $" . number_format($totalValue, 2) . "</p>
+            <p>Order Status: {$order->status}</p>
+            <p>Placed on: {$order->created_at->format('M j, Y g:i A')}</p>
+            <p>Please prepare the items for shipping.</p>
+        ";
+
+        try {
+            Mail::send([], [], function ($message) use ($vendor, $subject, $emailContent) {
+                $message->to($vendor->email)
+                    ->subject($subject)
+                    ->html($emailContent);
+            });
+        } catch (\Exception $e) {
+            Log::error("Vendor order notification email failed: " . $e->getMessage());
+        }
+    }
+
+    /** Send Telegram notification to vendor */
+    protected function sendVendorTelegramNotification(User $vendor, Order $order, array $vendorItems): void
+    {
+        $itemsCount = count($vendorItems);
+        $totalValue = collect($vendorItems)->sum('total_price');
+
+        $vendorMessage = "📦 *NEW ORDER - YOUR PRODUCTS*
+
+        🆔 *Order #:* {$order->order_number}
+        👤 *Customer:* {$order->user->name}
+        📧 *Email:* {$order->user->email}
+        📦 *Your Items:* {$itemsCount} product(s)
+        💰 *Total Value:* \$" . number_format($totalValue, 2) . "
+        📅 *Order Date:* {$order->created_at->format('M j, Y g:i A')}
+        🏷️ *Status:* {$order->status}
+
+        _Please prepare your items for shipping._";
+
+        $this->maybeSendTelegramForUser($vendor, $vendorMessage, $order->id);
+    }
+
+    /** Notify about order status changes to buyer, admins, and vendors */
+    public function notifyOrderStatusChanged(Order $order, string $oldStatus = null): void
+    {
+        $user = $order->user;
+        $newStatus = $order->status;
+
+        // Status change messages
+        $statusMessages = [
+            'pending' => ['title' => '⏳ Order Pending', 'message' => 'Your order is being processed'],
+            'processing' => ['title' => '🔄 Order Processing', 'message' => 'We are preparing your order'],
+            'shipped' => ['title' => '🚚 Order Shipped', 'message' => 'Your order has been shipped'],
+            'delivered' => ['title' => '✅ Order Delivered', 'message' => 'Your order has been delivered'],
+            'completed' => ['title' => '🎉 Order Completed', 'message' => 'Your order is complete'],
+            'cancelled' => ['title' => '❌ Order Cancelled', 'message' => 'Your order has been cancelled'],
+            'refunded' => ['title' => '💸 Order Refunded', 'message' => 'Your order has been refunded'],
+        ];
+
+        $statusInfo = $statusMessages[$newStatus] ?? ['title' => 'Order Updated', 'message' => 'Your order status has been updated'];
+
+        // 1) Buyer Notification
+        $notification = $user->notifications()->create([
+            'type' => 'order_status_changed',
+            'data' => [
+                'title' => $statusInfo['title'],
+                'message' => "Order #{$order->order_number} is now {$newStatus}. " . $statusInfo['message'],
+                'order_id' => $order->id,
+                'order_number' => $order->order_number,
+                'old_status' => $oldStatus,
+                'new_status' => $newStatus,
+                'changed_at' => now()->toISOString(),
+            ],
+            'read_at' => null,
+        ]);
+
+        event(new NotificationCreated($notification));
+
+        // Buyer email
+        $this->sendOrderStatusEmail($user, $order, $oldStatus, $newStatus);
+
+        // 2) Admin Notifications
+        User::admins()->get()->each(function ($admin) use ($order, $oldStatus, $newStatus) {
+            $admin->notifications()->create([
+                'type' => 'order_status_changed_admin',
+                'data' => [
+                    'title' => '📊 Order Status Updated',
+                    'message' => "Order #{$order->order_number} status changed from {$oldStatus} to {$newStatus}",
+                    'order_id' => $order->id,
+                    'order_number' => $order->order_number,
+                    'customer_name' => $order->user->name,
+                    'old_status' => $oldStatus,
+                    'new_status' => $newStatus,
+                ],
+            ]);
+
+            $this->sendAdminStatusEmail($admin, $order, $oldStatus, $newStatus);
+        });
+
+        // 3) Vendor Notifications
+        $this->notifyVendorsOrderStatusChanged($order, $oldStatus, $newStatus);
+
+        // 4) Telegram notifications
+        $this->sendOrderStatusTelegramNotifications($order, $oldStatus, $newStatus);
+    }
+
+     /** Notify vendors about order status changes */
+    protected function notifyVendorsOrderStatusChanged(Order $order, string $oldStatus, string $newStatus): void
+    {
+        $vendors = [];
+
+        foreach ($order->items as $item) {
+            if ($item->product && $item->product->vendor) {
+                $vendor = $item->product->vendor;
+                $vendorId = $vendor->id;
+
+                if (!isset($vendors[$vendorId])) {
+                    $vendors[$vendorId] = $vendor;
+                }
+            }
+        }
+
+        foreach ($vendors as $vendor) {
+            // Database notification for vendor
+            $vendor->notifications()->create([
+                'type' => 'order_status_changed_vendor',
+                'data' => [
+                    'title' => '📊 Order Status Updated',
+                    'message' => "Order #{$order->order_number} containing your products changed from {$oldStatus} to {$newStatus}",
+                    'order_id' => $order->id,
+                    'order_number' => $order->order_number,
+                    'customer_name' => $order->user->name,
+                    'old_status' => $oldStatus,
+                    'new_status' => $newStatus,
+                ],
+            ]);
+
+            // Vendor email
+            $this->sendVendorStatusEmail($vendor, $order, $oldStatus, $newStatus);
+
+            // Vendor Telegram
+            $this->sendVendorStatusTelegram($vendor, $order, $oldStatus, $newStatus);
+        }
+    }
+
+    /** Send order status email to buyer */
+    protected function sendOrderStatusEmail(User $user, Order $order, string $oldStatus, string $newStatus): void
+    {
+        $subject = "Order #{$order->order_number} Status Updated to " . ucfirst($newStatus);
+
+        $emailContent = "
+            <h2>Order Status Updated</h2>
+            <p>Hi {$user->name},</p>
+            <p>The status of your order <b>#{$order->order_number}</b> has been updated.</p>
+            <p><b>Previous Status:</b> " . ucfirst($oldStatus) . "</p>
+            <p><b>Current Status:</b> " . ucfirst($newStatus) . "</p>
+            <p><b>Update Time:</b> " . now()->format('M j, Y g:i A') . "</p>
+        ";
+
+        try {
+            Mail::send([], [], function ($message) use ($user, $subject, $emailContent) {
+                $message->to($user->email)
+                    ->subject($subject)
+                    ->html($emailContent);
+            });
+        } catch (\Exception $e) {
+            Log::error("Order status email failed: " . $e->getMessage());
+        }
+    }
+
+    /** Send order status email to admin */
+    protected function sendAdminStatusEmail(User $admin, Order $order, string $oldStatus, string $newStatus): void
+    {
+        $subject = "Order #{$order->order_number} Status Changed";
+
+        $emailContent = "
+            <h2>Order Status Changed</h2>
+            <p>Order #: <b>{$order->order_number}</b></p>
+            <p>Customer: {$order->user->name} ({$order->user->email})</p>
+            <p><b>Status Changed:</b> {$oldStatus} → {$newStatus}</p>
+            <p><b>Change Time:</b> " . now()->format('M j, Y g:i A') . "</p>
+        ";
+
+        try {
+            Mail::send([], [], function ($message) use ($admin, $subject, $emailContent) {
+                $message->to($admin->email)
+                    ->subject($subject)
+                    ->html($emailContent);
+            });
+        } catch (\Exception $e) {
+            Log::error("Admin status email failed: " . $e->getMessage());
+        }
+    }
+
+    /** Send order status email to vendor */
+    protected function sendVendorStatusEmail(User $vendor, Order $order, string $oldStatus, string $newStatus): void
+    {
+        $subject = "Order #{$order->order_number} Status Updated";
+
+        $emailContent = "
+            <h2>Order Status Updated - Your Products</h2>
+            <p>Hello {$vendor->name},</p>
+            <p>The status of order <b>#{$order->order_number}</b> containing your products has been updated.</p>
+            <p>Customer: {$order->user->name} ({$order->user->email})</p>
+            <p><b>Status Changed:</b> {$oldStatus} → {$newStatus}</p>
+            <p><b>Update Time:</b> " . now()->format('M j, Y g:i A') . "</p>
+        ";
+
+        try {
+            Mail::send([], [], function ($message) use ($vendor, $subject, $emailContent) {
+                $message->to($vendor->email)
+                    ->subject($subject)
+                    ->html($emailContent);
+            });
+        } catch (\Exception $e) {
+            Log::error("Vendor status email failed: " . $e->getMessage());
+        }
+    }
+
+    /** Send Telegram notifications for order status change */
+    protected function sendOrderStatusTelegramNotifications(Order $order, string $oldStatus, string $newStatus): void
+    {
+        $user = $order->user;
+
+        // Buyer message
+        $buyerMessage = "📊 *Order Status Updated*
+
+        🆔 *Order #:* {$order->order_number}
+        🔄 *Status Changed:* {$oldStatus} → {$newStatus}
+        📅 *Updated:* " . now()->format('M j, Y g:i A') . "
+
+        _We'll keep you updated on your order progress._";
+
+        $this->maybeSendTelegramForUser($user, $buyerMessage, $order->id);
+
+        // Admin message
+        $adminMessage = "📊 *ORDER STATUS UPDATED*
+
+        🆔 *Order #:* {$order->order_number}
+        👤 *Customer:* {$order->user->name}
+        🔄 *Status:* {$oldStatus} → {$newStatus}
+        📅 *Updated:* " . now()->format('M j, Y g:i A');
+
+        $this->maybeBroadcastTelegramToAdmins($adminMessage, $order->id);
+    }
+
+    /** Send vendor status Telegram */
+    protected function sendVendorStatusTelegram(User $vendor, Order $order, string $oldStatus, string $newStatus): void
+    {
+        $vendorMessage = "📊 *ORDER STATUS UPDATED - YOUR PRODUCTS*
+
+        🆔 *Order #:* {$order->order_number}
+        👤 *Customer:* {$order->user->name}
+        🔄 *Status:* {$oldStatus} → {$newStatus}
+        📅 *Updated:* " . now()->format('M j, Y g:i A');
+
+        $this->maybeSendTelegramForUser($vendor, $vendorMessage, $order->id);
     }
 
     /** Enhanced order confirmation email */
@@ -314,33 +650,32 @@ class NotificationService
     /** Enhanced stock alert notifications */
     public function notifyStockAlert(Product $product): void
     {
+        // Determine alert type and message
+        if ($product->stock <= 0) {
+            $alertType = 'out_of_stock';
+            $title     = '🛑 Out of Stock';
+            $message   = "Product '{$product->name}' is out of stock";
+        } elseif ($product->stock <= $product->low_stock_threshold) {
+            $alertType = 'low_stock';
+            $title     = '⚠️ Low Stock';
+            $message   = "Product '{$product->name}' has low stock: {$product->stock} remaining";
+        } else {
+            // No alert, skip
+            return;
+        }
+
+        // Prepare notification data
+        $notificationData = [
+            'product_id'    => $product->id,
+            'product_name'  => $product->name,
+            'current_stock' => $product->stock,
+            'threshold'     => $product->low_stock_threshold,
+            'alert_type'    => $alertType,
+        ];
+
+        // 1) Notify Admins
         $admins = User::admins()->get();
-
         foreach ($admins as $admin) {
-
-            if ($product->stock <= 0) {
-                $alertType = 'out_of_stock';
-                $title     = '🛑 Out of Stock';
-                $message   = "Product '{$product->name}' is out of stock";
-            } elseif ($product->stock <= $product->low_stock_threshold) {
-                $alertType = 'low_stock';
-                $title     = '⚠️ Low Stock';
-                $message   = "Product '{$product->name}' has low stock: {$product->stock} remaining";
-            } else {
-                // No alert, skip
-                continue;
-            }
-
-            // Prepare notification data
-            $notificationData = [
-                'product_id'    => $product->id,
-                'product_name'  => $product->name,
-                'current_stock' => $product->stock,
-                'threshold'     => $product->low_stock_threshold,
-                'alert_type'    => $alertType,
-            ];
-
-            // Create notification in DB and assign to variable
             $notification = $admin->notifications()->create([
                 'type' => $alertType,
                 'data' => array_merge([
@@ -349,19 +684,77 @@ class NotificationService
                 ], $notificationData),
             ]);
 
-            // Broadcast the notification
             event(new NotificationCreated($notification));
 
-            // Send stock alert email
+            // Send stock alert email to admin
             $this->sendStockAlertEmail($admin, $product);
 
-            // Send Telegram notification
+            // Send Telegram notification to admin
             $telegramMessage = $title . "\nProduct: {$product->name}\nCurrent Stock: {$product->stock}\nThreshold: {$product->low_stock_threshold}";
-
             $this->maybeSendTelegramForUser($admin, $telegramMessage);
+        }
+
+        // 2) Notify Vendor (if product has a vendor)
+        if ($product->vendor) {
+            $vendor = $product->vendor;
+
+            // Database notification for vendor
+            $vendorNotification = $vendor->notifications()->create([
+                'type' => $alertType . '_vendor',
+                'data' => array_merge([
+                    'title'   => $title . ' - Your Product',
+                    'message' => $message . ". Please restock soon.",
+                ], $notificationData),
+            ]);
+
+            event(new NotificationCreated($vendorNotification));
+
+            // Send stock alert email to vendor
+            $this->sendVendorStockAlertEmail($vendor, $product);
+
+            // Send Telegram notification to vendor
+            $vendorTelegramMessage = $title . " - YOUR PRODUCT\nProduct: {$product->name}\nCurrent Stock: {$product->stock}\nThreshold: {$product->low_stock_threshold}\nPlease restock soon.";
+            $this->maybeSendTelegramForUser($vendor, $vendorTelegramMessage);
         }
     }
 
+    /** Send stock alert email to vendor */
+    protected function sendVendorStockAlertEmail(User $vendor, Product $product): void
+    {
+        $subject = $product->stock <= 0
+            ? "🛑 Out of Stock: {$product->name}"
+            : "⚠️ Low Stock Alert: {$product->name}";
+
+        $statusText = $product->stock <= 0
+            ? "Your product '{$product->name}' is out of stock"
+            : "Your product '{$product->name}' has low stock: {$product->stock} remaining";
+
+        $emailContent = "
+            <h2>{$subject}</h2>
+            <p>Hello {$vendor->name},</p>
+            <p>{$statusText}</p>
+            <p><b>Product Details:</b></p>
+            <ul>
+                <li>Product Name: {$product->name}</li>
+                <li>Current Stock: {$product->stock}</li>
+                <li>Low Stock Threshold: {$product->low_stock_threshold}</li>
+                <li>Product SKU: {$product->sku}</li>
+            </ul>
+            <p>Please update your inventory soon to avoid sales disruption.</p>
+            <p>Thank you,<br>Admin Team</p>
+        ";
+
+        try {
+            Mail::send([], [], function ($message) use ($vendor, $subject, $emailContent) {
+                $message->to($vendor->email)
+                    ->subject($subject)
+                    ->html($emailContent);
+            });
+            Log::info("Vendor stock alert email sent to: {$vendor->email}");
+        } catch (\Exception $e) {
+            Log::error("Vendor stock alert email failed: " . $e->getMessage());
+        }
+    }
 
     /** Enhanced stock alert email */
     protected function sendStockAlertEmail(User $admin, Product $product): void

@@ -15,7 +15,7 @@ return new class extends Migration
             $table->id();
             $table->foreignId('order_id')->constrained()->onDelete('cascade');
             $table->foreignId('delivery_agent_id')->constrained('users')->onDelete('cascade');
-            $table->foreignId('conversation_id')->nullable()->constrained('conversations')->onDelete('cascade');
+            $table->foreignId('conversation_id')->nullable();
             $table->enum('status', ['pending', 'assigned', 'picked_up', 'in_transit', 'out_for_delivery', 'delivered', 'cancelled']);
             $table->timestamp('assigned_at')->nullable();
             $table->timestamp('picked_up_at')->nullable();

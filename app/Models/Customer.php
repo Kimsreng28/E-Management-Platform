@@ -56,4 +56,14 @@ class Customer extends User
     {
         return $this->hasOne(UserNotificationSetting::class, 'user_id');
     }
+
+    public function role()
+    {
+        return $this->belongsTo(Role::class);
+    }
+
+    public function shop()
+    {
+        return $this->hasOne(Shop::class);
+    }
 }

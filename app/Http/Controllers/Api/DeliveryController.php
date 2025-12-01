@@ -23,7 +23,7 @@ class DeliveryController extends Controller
     // Get available delivery agents
     public function getAvailableAgents()
     {
-        $agents = User::where('role_id', 3) // Delivery role
+        $agents = User::where('role_id', 5) // Delivery role
             ->where('is_active', true)
             ->withCount(['deliveries' => function($query) {
                 $query->whereIn('status', ['assigned', 'picked_up', 'out_for_delivery']);
@@ -58,7 +58,7 @@ class DeliveryController extends Controller
 
         $agentId = $request->agent_id;
         if ($request->auto_assign) {
-            $agent = User::where('role_id', 3)
+            $agent = User::where('role_id', 5)
                 ->where('is_active', true)
                 ->withCount(['deliveries' => function($q) {
                     $q->whereIn('status', ['assigned', 'picked_up', 'out_for_delivery']);

@@ -39,6 +39,7 @@ use App\Models\Product;
 use App\Models\Order;
 use App\Http\Controllers\Api\ContactController;
 use App\Http\Controllers\Api\EmailVerificationController;
+use App\Http\Controllers\Api\AdminController;
 
 // Public Route (accessible without login or authentication)
 
@@ -89,6 +90,10 @@ Route::get('/products/category/{categoryId}', [ProductController::class, 'getByC
 Route::get('/reviews/product/{productId}', [ReviewController::class, 'getByProduct']);
 Route::get('/orders/{order}/invoice', [OrderController::class, 'downloadInvoice']);
 
+// brand routes
+Route::get('companies', [BrandController::class, 'getAllBrand']);
+Route::get('companies/{slug}', [BrandController::class, 'getBrand']);
+
 // Get recent reviews with user information
 Route::get('/reviews/recent', [ReviewController::class, 'recent']);
 
@@ -111,6 +116,7 @@ Route::get('/stats/platform', function () {
 Route::get('reviews', [ReviewController::class, 'index']);
 Route::get('reviews/{review}', [ReviewController::class, 'show']);
 
+
 Route::prefix('auth')->group(function () {
     // Auth routes
     Route::post('register', [AuthController::class, 'register']);
@@ -130,6 +136,7 @@ Route::prefix('auth')->group(function () {
     Route::match(['get', 'post'], '/telegram/spa-login', [AuthController::class, 'telegramSpaLogin']);
 });
 
+
 Route::middleware(['auth:sanctum', 'role:admin'])->group(function () {
     // Category routes
     Route::post('categories', [CategoryController::class, 'store']);
@@ -137,22 +144,18 @@ Route::middleware(['auth:sanctum', 'role:admin'])->group(function () {
     Route::delete('categories/{slug}', [CategoryController::class, 'destroy']);
 
     // Brand or company routes
-    Route::get('companies', [BrandController::class, 'getAllBrand']);
     Route::post('companies', [BrandController::class, 'createBrand']);
-    Route::get('companies/{slug}', [BrandController::class, 'getBrand']);
     Route::put('companies/{slug}', [BrandController::class, 'updateBrand']);
     Route::delete('companies/{slug}', [BrandController::class, 'deleteBrand']);
 
     Route::get('/products/export/csv', [ProductController::class, 'exportProducts']);
 
     // Product routes
-    Route::post('products', [ProductController::class, 'createProduct']);
     Route::put('products/{slug}', [ProductController::class, 'updateProduct']);
     Route::delete('products/{slug}', [ProductController::class, 'deleteProduct']);
     Route::post('/products/import', [ProductController::class, 'importProducts']);
 
     // Order routes
-    Route::put('orders/{order}', [OrderController::class, 'updateOrderStatus']);
     Route::delete('orders/{order}', [OrderController::class, 'deleteOrder']);
     Route::put('orders/{order}/update-addresses', [OrderController::class, 'updateOrderAddresses']);
 
@@ -161,11 +164,24 @@ Route::middleware(['auth:sanctum', 'role:admin'])->group(function () {
     Route::post('coupons', [CouponController::class, 'createCoupon']);
     Route::put('coupons/{code}', [CouponController::class, 'updateCoupon']);
     Route::delete('coupons/{code}', [CouponController::class, 'deleteCoupon']);
+
+    // User role management
+    Route::post('/users/{user}/assign-role', [AdminController::class, 'assignRole']);
+    Route::get('/permissions', [AdminController::class, 'getPermissions']);
+    Route::get('/roles/{role}/permissions', [AdminController::class, 'getRolePermissions']);
+
+    Route::get('admin/reviews/stats', [ReviewController::class, 'adminStats']);
 });
 
-// For authenticated customer
-Route::middleware('auth:sanctum', 'role:customer')->group(function () {
-
+// Vendor routes
+Route::middleware(['auth:sanctum', 'role:vendor'])->group(function () {
+    // Vendor sees only their products
+    Route::get('vendor/products', [ProductController::class, 'getVendorProducts']);
+    // Vendor stats
+    Route::get('vendor/products/stats', [ProductController::class, 'getVendorProductsStats']);
+    // Review Vendor
+    Route::get('vendor/reviews', [ReviewController::class, 'vendorReviews']);
+    Route::get('vendor/reviews/stats', [ReviewController::class, 'stats']);
 });
 
 Route::post('/email/verification-notification', [EmailVerificationController::class, 'resend'])
@@ -183,6 +199,9 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/email/verify', [EmailVerificationController::class, 'checkVerificationStatus'])
         ->name('verification.status');
 
+    // Product route
+    Route::post('products', [ProductController::class, 'createProduct']);
+
     // Address routes
     Route::get('/addresses', [AddressController::class, 'getAllUserAddresses']);
     Route::post('/addresses', [AddressController::class, 'createAddress']);
@@ -198,10 +217,12 @@ Route::middleware('auth:sanctum')->group(function () {
     });
 
     // Order routes accessible by authenticated users
+    Route::post('orders', [OrderController::class, 'createOrder']);
     Route::get('orders', [OrderController::class, 'getAllOrders']);
     Route::get('orders/{order}', [OrderController::class, 'showOrder']);
-    Route::post('orders', [OrderController::class, 'createOrder']);
     Route::post('orders/preview', [OrderController::class, 'previewOrder']);
+    Route::put('orders/{order}', [OrderController::class, 'updateOrderStatus']);
+    Route::post('orders/{order}/complete', [OrderController::class, 'completeOrder']);
 
 
     // Wishlist products
@@ -246,6 +267,11 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Review routes
     Route::post('reviews', [ReviewController::class, 'store']);
+
+    // Review replies
+    Route::post('reviews/{review}/reply', [ReviewController::class, 'reply']);
+    Route::delete('reviews/{review}/replies/{replyId}', [ReviewController::class, 'deleteReply']);
+
     Route::put('reviews/{review}', [ReviewController::class, 'update']);
     Route::delete('reviews/{review}', [ReviewController::class, 'destroy']);
 
@@ -264,9 +290,13 @@ Route::middleware('auth:sanctum')->group(function () {
     // Business Settings
     Route::get('/business-settings', [BusinessSettingController::class, 'index']);
     Route::post('/business-settings', [BusinessSettingController::class, 'store']);
+    Route::get('/business-settings/user-role', [BusinessSettingController::class, 'getUserRole']);
 
     // Customer
     Route::get('/customers', [CustomerController::class, 'getAllCustomers']);
+    Route::get('/customers/vendors', [CustomerController::class, 'getAllVendors']);
+    Route::get('/customers/deliveries', [CustomerController::class, 'getAllDeliveries']);
+    Route::post('/customers/{id}/assign-role', [CustomerController::class, 'assignRole']);
     Route::get('/customers/{customer}', [CustomerController::class, 'getCustomer']);
     Route::put('/customers/{customer}', [CustomerController::class, 'updateCustomer']);
     Route::delete('/customers/{customer}', [CustomerController::class, 'deleteCustomer']);
@@ -276,6 +306,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/dashboard/recent-orders', [DashboardController::class, 'recentOrders']);
     Route::get('/dashboard/low-stock', [DashboardController::class, 'lowStock']);
     Route::post('/dashboard/restock', [DashboardController::class, 'restockProduct']);
+    Route::get('/dashboard/chart-data', [DashboardController::class, 'chartData']);
 
     //Stock
     Route::prefix('stock')->group(function () {

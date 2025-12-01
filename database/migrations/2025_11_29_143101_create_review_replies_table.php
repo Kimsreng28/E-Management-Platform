@@ -11,12 +11,12 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('conversations', function (Blueprint $table) {
+        Schema::create('review_replies', function (Blueprint $table) {
             $table->id();
-            $table->string('participants_key')->unique();
-            $table->foreignId('delivery_id')->nullable();
-            $table->string('title')->nullable();
-            $table->enum('type', ['customer_to_customer', 'customer_to_delivery']);
+            $table->foreignId('review_id')->constrained()->onDelete('cascade');
+            $table->foreignId('user_id')->constrained()->onDelete('cascade');
+            $table->text('comment');
+            $table->boolean('is_vendor_reply')->default(false);
             $table->timestamps();
         });
     }
@@ -26,6 +26,6 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::dropIfExists('conversations');
+        Schema::dropIfExists('review_replies');
     }
 };

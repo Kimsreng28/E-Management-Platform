@@ -5,31 +5,51 @@ namespace App\Http\Middleware;
 use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
+use Illuminate\Support\Facades\Log;
 
 class RoleMiddleware
 {
-    /**
-     * Handle an incoming request.
-     *
-     * @param  \Closure(\Illuminate\Http\Request): (\Symfony\Component\HttpFoundation\Response)  $next
-     */
     public function handle(Request $request, Closure $next, ...$roles): Response
     {
         $user = $request->user();
 
-        // Check if the user is authenticated and has the required role
-        if (! $user) {
-            return response()->json(['message' => 'Unauthorized'], 401);
+        if (!$user) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthenticated'
+            ], 401);
         }
 
-        // Check if the user has a role
-        if (!$user->role) {
-            return response()->json(['message' => 'User has no role assigned'], 403);
+        // Check if user has any of the required roles
+        $hasRole = false;
+        foreach ($roles as $role) {
+            if ($role === 'admin' && $user->isAdmin()) {
+                $hasRole = true;
+                break;
+            } elseif ($role === 'vendor' && $user->isVendor()) {
+                $hasRole = true;
+                break;
+            } elseif ($role === 'customer' && $user->isCustomer()) {
+                $hasRole = true;
+                break;
+            } elseif ($role === 'delivery' && $user->isDelivery()) {
+                $hasRole = true;
+                break;
+            }
         }
 
-        // Check if the user has the required role
-        if (! $user || ! in_array($user->role->name, $roles)) {
-            return response()->json(['message' => 'Forbidden – insufficient role'], 403);
+        if (!$hasRole) {
+            Log::warning('Role access denied', [
+                'user_id' => $user->id,
+                'user_role_id' => $user->role_id,
+                'required_roles' => $roles,
+                'route' => $request->route() ? $request->route()->getName() : null
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Forbidden – insufficient role'
+            ], 403);
         }
 
         return $next($request);

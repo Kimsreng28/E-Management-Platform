@@ -17,7 +17,7 @@ class DeliveryAgentSeeder extends Seeder
                 'email' => 'john.delivery@example.com',
                 'password' => Hash::make('password'),
                 'phone' => '1234567890',
-                'role_id' => 3, // Delivery role
+                'role_id' => 5, // Delivery role
                 'is_active' => true
             ],
             [
@@ -25,7 +25,7 @@ class DeliveryAgentSeeder extends Seeder
                 'email' => 'sarah.courier@example.com',
                 'password' => Hash::make('password'),
                 'phone' => '0987654321',
-                'role_id' => 3, // Delivery role
+                'role_id' => 5, // Delivery role
                 'is_active' => true
             ],
             [
@@ -33,7 +33,7 @@ class DeliveryAgentSeeder extends Seeder
                 'email' => 'mike.logistics@example.com',
                 'password' => Hash::make('password'),
                 'phone' => '5551234567',
-                'role_id' => 3, // Delivery role
+                'role_id' => 5, // Delivery role
                 'is_active' => true
             ]
         ];

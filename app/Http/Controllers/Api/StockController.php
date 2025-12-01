@@ -21,12 +21,21 @@ class StockController extends Controller
     public function index(Request $request)
     {
         try {
+            $user = $request->user();
             $perPage = $request->get('per_page', 10);
             $search = $request->get('search', '');
             $sortBy = $request->get('sort_by', 'name');
             $sortOrder = $request->get('sort_order', 'asc');
 
-            $products = Product::when($search, function ($query) use ($search) {
+            $query = Product::query();
+
+            // If user is a vendor, only show their products
+            if ($user->isVendor()) {
+                $query->where('vendor_id', $user->id);
+            }
+            // Admin can see all products
+
+            $products = $query->when($search, function ($query) use ($search) {
                     return $query->where('name', 'like', '%' . $search . '%')
                                 ->orWhere('sku', 'like', '%' . $search . '%');
                 })

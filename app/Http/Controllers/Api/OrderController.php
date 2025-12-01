@@ -6,133 +6,91 @@ use App\Models\Order;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\Cache;
 use App\Services\NotificationService;
 use App\Models\BusinessSetting;
 use App\Models\Coupon;
 use App\Models\Product;
 use Barryvdh\DomPDF\Facade\Pdf;
+use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\Log;
 
-class OrderController
+class OrderController extends Controller
 {
     protected NotificationService $notify;
-
-    // Cache durations in seconds
-    private $cacheDurations = [
-        'order_stats' => 300, // 5 minutes
-        'order_list' => 600, // 10 minutes (orders change frequently)
-        'order_detail' => 900, // 15 minutes
-        'order_preview' => 300, // 5 minutes
-    ];
 
     public function __construct(NotificationService $notify)
     {
         $this->notify = $notify;
     }
 
-    private function clearOrderCaches($orderId = null)
-    {
-        // Clear main caches
-        Cache::forget('order:stats');
-        Cache::forget('orders:list');
-
-        // Clear order-specific caches
-        if ($orderId) {
-            Cache::forget("order:{$orderId}");
-            Cache::forget("order:invoice:{$orderId}");
-        }
-
-        // Clear all order listing caches with patterns
-        $patterns = ['*orders:*', '*order:*', '*order:stats*'];
-
-        foreach ($patterns as $pattern) {
-            try {
-                $keys = Cache::getRedis()->keys($pattern);
-                foreach ($keys as $key) {
-                    $cleanKey = str_replace(config('database.redis.options.prefix', 'laravel_database_'), '', $key);
-                    Cache::forget($cleanKey);
-                }
-            } catch (\Exception $e) {
-                // Fallback: clear the entire cache if pattern matching fails
-                Cache::flush();
-                break;
-            }
-        }
-    }
-
     // Preview order
     public function previewOrder(Request $request)
     {
-        $cacheKey = 'order:preview:' . md5(serialize($request->all()));
+        $validated = $request->validate([
+            'items' => 'required|array|min:1',
+            'items.*.product_id' => 'required|exists:products,id',
+            'items.*.quantity' => 'required|integer|min:1',
+            'coupon_code' => 'nullable|string',
+        ]);
 
-        $previewData = Cache::remember($cacheKey, $this->cacheDurations['order_preview'], function () use ($request) {
-            $validated = $request->validate([
-                'items' => 'required|array|min:1',
-                'items.*.product_id' => 'required|exists:products,id',
-                'items.*.quantity' => 'required|integer|min:1',
-                'coupon_code' => 'nullable|string',
-            ]);
+        $settings = $this->getVendorSettingsFromItems($validated['items']);
 
-            $settings = BusinessSetting::where('user_id', Auth::id())->first();
+        $taxRate = $settings->tax_rate ?? 0.1; // fallback to 10%
+        $shippingCost = $settings->default_shipping_cost ?? 0.1;
 
-            $taxRate = $settings->tax_rate ?? 0.1; // fallback to 10%
-            $shippingCost = $settings->default_shipping_cost ?? 0.1;
+        $subtotal = 0;
+        $totalProductDiscount = 0; // Track discount from products
+        $itemsPreview = [];
 
-            $subtotal = 0;
-            $totalProductDiscount = 0; // Track discount from products
-            $itemsPreview = [];
+        foreach ($validated['items'] as $item) {
+            $product = Product::findOrFail($item['product_id']);
 
-            foreach ($validated['items'] as $item) {
-                $product = Product::findOrFail($item['product_id']);
+            $discount = $product->discount ?? 0; // 0% if no discount
+            $discountPrice = round($product->price * (1 - ($discount / 100)), 2);
 
-                $discount = $product->discount ?? 0; // 0% if no discount
-                $discountPrice = round($product->price * (1 - ($discount / 100)), 2);
+            $totalPriceWithoutDiscount = $product->price * $item['quantity'];
+            $totalPriceWithDiscount = $discountPrice * $item['quantity'];
 
-                $totalPriceWithoutDiscount = $product->price * $item['quantity'];
-                $totalPriceWithDiscount = $discountPrice * $item['quantity'];
+            $subtotal += $totalPriceWithDiscount;
+            $totalProductDiscount += $totalPriceWithoutDiscount - $totalPriceWithDiscount;
 
-                $subtotal += $totalPriceWithDiscount;
-                $totalProductDiscount += $totalPriceWithoutDiscount - $totalPriceWithDiscount;
+            $itemsPreview[] = [
+                'product_id' => $product->id,
+                'name' => $product->name,
+                'unit_price' => $product->price,
+                'discount' => $discount,
+                'discount_price' => $discountPrice,
+                'quantity' => $item['quantity'],
+                'total_price' => $totalPriceWithDiscount,
+            ];
+        }
 
-                $itemsPreview[] = [
-                    'product_id' => $product->id,
-                    'name' => $product->name,
-                    'unit_price' => $product->price,
-                    'discount' => $discount,
-                    'discount_price' => $discountPrice,
-                    'quantity' => $item['quantity'],
-                    'total_price' => $totalPriceWithDiscount,
-                ];
-            }
-
-            // Coupon discount
-            $couponDiscount = 0.0;
-            if (!empty($validated['coupon_code'])) {
-                $coupon = Coupon::where('code', $validated['coupon_code'])->first();
-                if ($coupon && $coupon->isValid()) {
-                    if ($coupon->type === 'fixed') {
-                        $couponDiscount = $coupon->value;
-                    } elseif ($coupon->type === 'percentage') {
-                        $couponDiscount = $subtotal * ($coupon->value / 100);
-                    }
+        // Coupon discount
+        $couponDiscount = 0.0;
+        if (!empty($validated['coupon_code'])) {
+            $coupon = Coupon::where('code', $validated['coupon_code'])->first();
+            if ($coupon && $coupon->isValid()) {
+                if ($coupon->type === 'fixed') {
+                    $couponDiscount = $coupon->value;
+                } elseif ($coupon->type === 'percentage') {
+                    $couponDiscount = $subtotal * ($coupon->value / 100);
                 }
             }
+        }
 
-            $taxAmount = $subtotal * ($taxRate / 100);
-            $total = $subtotal + $taxAmount + $shippingCost - $couponDiscount;
-            if ($total < 0) $total = 0;
+        $taxAmount = $subtotal * ($taxRate / 100);
+        $total = $subtotal + $taxAmount + $shippingCost - $couponDiscount;
+        if ($total < 0) $total = 0;
 
-            return [
-                'items' => $itemsPreview,
-                'subtotal' => round($subtotal, 2),
-                'shipping_cost' => round($shippingCost, 2),
-                'tax_amount' => round($taxAmount, 2),
-                'product_discount' => round($totalProductDiscount, 2),
-                'coupon_discount' => round($couponDiscount, 2),
-                'total' => round($total, 2),
-            ];
-        });
+        $previewData = [
+            'items' => $itemsPreview,
+            'subtotal' => round($subtotal, 2),
+            'shipping_cost' => round($shippingCost, 2),
+            'tax_amount' => round($taxAmount, 2),
+            'product_discount' => round($totalProductDiscount, 2),
+            'coupon_discount' => round($couponDiscount, 2),
+            'total' => round($total, 2),
+        ];
 
         return response()->json($previewData);
     }
@@ -140,54 +98,65 @@ class OrderController
     // List orders for the authenticated user and admin
     public function getAllOrders(Request $request)
     {
-        $cacheKey = 'orders:list:' . md5(serialize($request->all()));
+        $user = $request->user();
 
-        $orders = Cache::remember($cacheKey, $this->cacheDurations['order_list'], function () use ($request) {
-            $query = Order::with(['items.product.images', 'user', 'payments']);
+        // Start with base query
+        $query = Order::with(['items.product.images', 'user', 'payments']);
 
-            // Search
-            if($request->filled('search')) {
-                $search = $request->search;
+        // If user is a vendor, only show orders containing their products
+        if ($user->isVendor()) {
+            $query->whereHas('items.product', function ($q) use ($user) {
+                $q->where('vendor_id', $user->id);
+            });
+        }
+        // If user is a customer, only show their own orders
+        elseif ($user->isCustomer()) {
+            $query->where('user_id', $user->id);
+        }
+        // Admin can see all orders (no additional filter)
 
-                $query->where(function($q) use ($search) {
-                    $q->where('id', 'LIKE', "%{$search}%")
-                      ->orWhere('status', 'LIKE', "%{$search}%")
-                      ->orWhereHas('user', function($userQuery) use ($search) {
-                          $userQuery->where('name', 'LIKE', "%{$search}%")
-                                   ->orWhere('email', 'LIKE', "%{$search}%");
-                      })
-                      ->orWhereHas('items', function($itemQuery) use ($search) {
-                          $itemQuery->where('product_name', 'LIKE', "%{$search}%");
-                      });
+        // Search
+        if($request->filled('search')) {
+            $search = $request->search;
+
+            $query->where(function($q) use ($search) {
+                $q->where('id', 'LIKE', "%{$search}%")
+                ->orWhere('status', 'LIKE', "%{$search}%")
+                ->orWhereHas('user', function($userQuery) use ($search) {
+                    $userQuery->where('name', 'LIKE', "%{$search}%")
+                            ->orWhere('email', 'LIKE', "%{$search}%");
+                })
+                ->orWhereHas('items', function($itemQuery) use ($search) {
+                    $itemQuery->where('product_name', 'LIKE', "%{$search}%");
                 });
-            }
+            });
+        }
 
-            // Filtering by status (pending, processing, shipped, completed, cancelled)
-            if ($request->filled('status')) {
-                $query->where('status', $request->status);
-            }
+        // Filtering by status (pending, processing, shipped, completed, cancelled)
+        if ($request->filled('status')) {
+            $query->where('status', $request->status);
+        }
 
-            // Filtering by payment (paid, pending, failed, refunded)
-            if ($request->filled('payment_status')) {
-                $query->whereHas('payments', function ($q) use ($request) {
-                    $q->where('status', $request->payment_status);
-                });
-            }
+        // Filtering by payment (paid, pending, failed, refunded)
+        if ($request->filled('payment_status')) {
+            $query->whereHas('payments', function ($q) use ($request) {
+                $q->where('status', $request->payment_status);
+            });
+        }
 
-            // Sorting
-            $sortBy = $request->get('sort_by', 'created_at');
-            $sortOrder = $request->get('sort_order', 'desc');
+        // Sorting
+        $sortBy = $request->get('sort_by', 'created_at');
+        $sortOrder = $request->get('sort_order', 'desc');
 
-            if (in_array($sortBy, ['id', 'order_number', 'status', 'total', 'created_at'])) {
-                $query->orderBy($sortBy, $sortOrder);
-            } else {
-                $query->orderBy('created_at', 'desc'); // default
-            }
+        if (in_array($sortBy, ['id', 'order_number', 'status', 'total', 'created_at'])) {
+            $query->orderBy($sortBy, $sortOrder);
+        } else {
+            $query->orderBy('created_at', 'desc'); // default
+        }
 
-            // Pagination
-            $perPage = $request->get('per_page', 15);
-            return $query->paginate($perPage);
-        });
+        // Pagination
+        $perPage = $request->get('per_page', 15);
+        $orders = $query->paginate($perPage);
 
         return response()->json($orders);
     }
@@ -208,11 +177,17 @@ class OrderController
 
         $user = $request->user();
 
+        Log::info('User role check', [
+            'user_id' => $user->id,
+            'role_id' => $user->role_id,
+            'email' => $user->email
+        ]);
+
         DB::beginTransaction();
 
         try {
             // Get business settings for the current user
-            $settings = BusinessSetting::where('user_id', Auth::id())->first();
+            $settings = $this->getVendorSettingsFromItems($validated['items']);
 
             $taxRate = $settings->tax_rate ?? 0.1; // fallback to 10%
             $shippingCost = $settings->default_shipping_cost ?? 0.1; // optional field
@@ -302,10 +277,6 @@ class OrderController
 
             DB::commit();
 
-            // Clear relevant caches
-            $this->clearOrderCaches();
-            $this->clearOrderCaches($order->id);
-
             $this->notify->notifyOrderCreated($order);
 
             return response()->json([
@@ -324,15 +295,88 @@ class OrderController
         }
     }
 
+    private function getVendorSettingsFromItems(array $items)
+    {
+        $vendorIds = [];
+        $createdByIds = [];
+
+        foreach ($items as $item) {
+            $product = Product::with('vendor', 'creator')->find($item['product_id']);
+
+            if ($product) {
+                // First priority: vendor_id
+                if ($product->vendor_id) {
+                    $vendorIds[] = $product->vendor_id;
+                    Log::info('Found vendor for product', [
+                        'product_id' => $product->id,
+                        'product_name' => $product->name,
+                        'vendor_id' => $product->vendor_id,
+                        'vendor_name' => $product->vendor->name ?? 'Unknown'
+                    ]);
+                }
+                // Second priority: created_by (admin-created products)
+                elseif ($product->created_by) {
+                    $createdByIds[] = $product->created_by;
+                    Log::info('Product has no vendor, using created_by', [
+                        'product_id' => $product->id,
+                        'created_by' => $product->created_by,
+                        'creator_name' => $product->creator->name ?? 'Unknown'
+                    ]);
+                } else {
+                    Log::warning('Product has no vendor_id or created_by', [
+                        'product_id' => $item['product_id'],
+                    ]);
+                }
+            }
+        }
+
+        // First try vendor settings
+        if (!empty($vendorIds)) {
+            $vendorId = $vendorIds[0];
+            $vendorSettings = BusinessSetting::where('user_id', $vendorId)->first();
+
+            if ($vendorSettings) {
+                Log::info('Using vendor settings for order', [
+                    'vendor_id' => $vendorId,
+                    'vendor_settings_id' => $vendorSettings->id,
+                    'business_name' => $vendorSettings->business_name
+                ]);
+                return $vendorSettings;
+            }
+        }
+
+        // Then try created_by user settings (for admin-created products)
+        if (!empty($createdByIds)) {
+            $creatorId = $createdByIds[0];
+            $creatorSettings = BusinessSetting::where('user_id', $creatorId)->first();
+
+            if ($creatorSettings) {
+                Log::info('Using creator settings for order', [
+                    'creator_id' => $creatorId,
+                    'creator_settings_id' => $creatorSettings->id,
+                    'business_name' => $creatorSettings->business_name
+                ]);
+                return $creatorSettings;
+            }
+        }
+
+        // Final fallback to admin settings
+        $adminSettings = BusinessSetting::where('user_id', 1)->first();
+
+        Log::info('Using admin settings as fallback for order', [
+            'vendor_ids_found' => $vendorIds,
+            'created_by_ids_found' => $createdByIds,
+            'admin_settings_found' => !is_null($adminSettings)
+        ]);
+
+        return $adminSettings;
+    }
+
     // Show specific order details (both user and admin)
     public function showOrder(Order $order)
     {
-        $cacheKey = "order:{$order->id}";
-
-        $orderData = Cache::remember($cacheKey, $this->cacheDurations['order_detail'], function () use ($order) {
-            // Load all necessary relationships at once
-            return $order->load(['items.product.images', 'payments', 'shippingAddress', 'billingAddress', 'user']);
-        });
+        // Load all necessary relationships at once
+        $orderData = $order->load(['items.product.images', 'payments', 'shippingAddress', 'billingAddress', 'user']);
 
         return response()->json($orderData);
     }
@@ -345,23 +389,55 @@ class OrderController
             'notes' => 'nullable|string',
         ]);
 
-        $oldStatus = $order->status;
+        $user = Auth::user();
         $newStatus = $validated['status'];
 
+        // If user is customer, restrict what they can do
+        if ($user->isCustomer()) {
+            // Customers can only complete their own orders
+            if ($order->user_id !== $user->id) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'You can only update your own orders'
+                ], 403);
+            }
+
+            // Customers can only set status to completed (for their own orders)
+            if ($newStatus !== 'completed') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Customers can only complete orders'
+                ], 403);
+            }
+
+            // Verify payment is completed OR it's a COD payment
+            $hasSuccessfulPayment = $order->payments()
+                ->where('status', 'completed')
+                ->exists();
+
+            $hasCODPayment = $order->payments()
+                ->where('payment_method', 'cod')
+                ->exists();
+
+            if (!$hasSuccessfulPayment && !$hasCODPayment) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Cannot complete order without successful payment or COD payment'
+                ], 400);
+            }
+        }
+
+        $oldStatus = $order->status;
         $order->update($validated);
 
-        // Update category orders when status changes to successful
+        // Update category orders when status changes
         if ($this->isSuccessfulStatus($newStatus) && !$this->isSuccessfulStatus($oldStatus)) {
             $this->incrementCategoryOrders($order);
         }
 
-        // Decrement category orders if status changes from successful to unsuccessful
         if (!$this->isSuccessfulStatus($newStatus) && $this->isSuccessfulStatus($oldStatus)) {
             $this->decrementCategoryOrders($order);
         }
-
-        // Clear relevant caches
-        $this->clearOrderCaches($order->id);
 
         return response()->json(['success' => true, 'order' => $order]);
     }
@@ -394,13 +470,6 @@ class OrderController
         foreach ($categories as $categoryId => $quantity) {
             \App\Models\Category::where('id', $categoryId)->increment('order', $quantity);
         }
-
-        // Clear category caches
-        Cache::forget('category:stats');
-        $keys = Cache::getRedis()->keys('*categories:*');
-        foreach ($keys as $key) {
-            Cache::forget(str_replace('laravel_database_', '', $key));
-        }
     }
 
     /**
@@ -423,13 +492,6 @@ class OrderController
         foreach ($categories as $categoryId => $quantity) {
             \App\Models\Category::where('id', $categoryId)->decrement('order', $quantity);
         }
-
-        // Clear category caches
-        Cache::forget('category:stats');
-        $keys = Cache::getRedis()->keys('*categories:*');
-        foreach ($keys as $key) {
-            Cache::forget(str_replace('laravel_database_', '', $key));
-        }
     }
 
     // Update order shipping address id and billing address id
@@ -442,20 +504,13 @@ class OrderController
 
         $order->update($validated);
 
-        // Clear order cache
-        $this->clearOrderCaches($order->id);
-
         return response()->json(['success' => true, 'order' => $order]);
     }
 
     // Delete order
     public function deleteOrder(Order $order)
     {
-        $orderId = $order->id;
         $order->forceDelete();
-
-        // Clear relevant caches
-        $this->clearOrderCaches($orderId);
 
         return response()->json(['success' => true, 'message' => 'Order deleted']);
     }
@@ -463,17 +518,13 @@ class OrderController
     // Order Stats
     public function getOrderStats()
     {
-        $cacheKey = 'order:stats';
-
-        $stats = Cache::remember($cacheKey, $this->cacheDurations['order_stats'], function () {
-            return [
-                'total' => Order::count(),
-                'pending' => Order::where('status', 'pending')->count(),
-                'processing' => Order::where('status', 'processing')->count(),
-                'shipped' => Order::where('status', 'shipped')->count(),
-                'completed' => Order::where('status', 'completed')->count(),
-            ];
-        });
+        $stats = [
+            'total' => Order::count(),
+            'pending' => Order::where('status', 'pending')->count(),
+            'processing' => Order::where('status', 'processing')->count(),
+            'shipped' => Order::where('status', 'shipped')->count(),
+            'completed' => Order::where('status', 'completed')->count(),
+        ];
 
         return response()->json($stats);
     }
@@ -482,11 +533,7 @@ class OrderController
     public function downloadInvoice(Order $order, Request $request, $type = 'download')
     {
         try {
-            $cacheKey = "order:invoice:{$order->id}";
-
-            $pdf = Cache::remember($cacheKey, 3600, function () use ($order) { // Cache PDF for 1 hour
-                return PDF::loadView('invoices.template', compact('order'));
-            });
+            $pdf = PDF::loadView('invoices.template', compact('order'));
 
             $headers = [
                 'Content-Type'              => 'application/pdf',
@@ -509,38 +556,34 @@ class OrderController
     public function getUserOrders(Request $request)
     {
         $user = $request->user();
-        $cacheKey = "orders:user:{$user->id}:" . md5(serialize($request->all()));
+        $query = Order::with(['items', 'payments'])
+            ->where('user_id', $user->id);
 
-        $orders = Cache::remember($cacheKey, $this->cacheDurations['order_list'], function () use ($request, $user) {
-            $query = Order::with(['items', 'payments'])
-                ->where('user_id', $user->id);
+        // Filter by status
+        if ($request->filled('status')) {
+            $query->where('status', $request->status);
+        }
 
-            // Filter by status
-            if ($request->filled('status')) {
-                $query->where('status', $request->status);
-            }
+        // Search in order items
+        if ($request->filled('search')) {
+            $search = $request->search;
+            $query->where(function($q) use ($search) {
+                $q->where('id', 'LIKE', "%{$search}%")
+                  ->orWhere('status', 'LIKE', "%{$search}%")
+                  ->orWhereHas('items', function($itemQuery) use ($search) {
+                      $itemQuery->where('product_name', 'LIKE', "%{$search}%");
+                  });
+            });
+        }
 
-            // Search in order items
-            if ($request->filled('search')) {
-                $search = $request->search;
-                $query->where(function($q) use ($search) {
-                    $q->where('id', 'LIKE', "%{$search}%")
-                      ->orWhere('status', 'LIKE', "%{$search}%")
-                      ->orWhereHas('items', function($itemQuery) use ($search) {
-                          $itemQuery->where('product_name', 'LIKE', "%{$search}%");
-                      });
-                });
-            }
+        // Sorting
+        $sortBy = $request->get('sort_by', 'created_at');
+        $sortOrder = $request->get('sort_order', 'desc');
+        $query->orderBy($sortBy, $sortOrder);
 
-            // Sorting
-            $sortBy = $request->get('sort_by', 'created_at');
-            $sortOrder = $request->get('sort_order', 'desc');
-            $query->orderBy($sortBy, $sortOrder);
-
-            // Pagination
-            $perPage = $request->get('per_page', 10);
-            return $query->paginate($perPage);
-        });
+        // Pagination
+        $perPage = $request->get('per_page', 10);
+        $orders = $query->paginate($perPage);
 
         return response()->json($orders);
     }
@@ -548,61 +591,61 @@ class OrderController
     // Get recent orders
     public function getRecentOrders($limit = 10)
     {
-        $cacheKey = "orders:recent:{$limit}";
-
-        $orders = Cache::remember($cacheKey, 300, function () use ($limit) { // 5 minutes cache
-            return Order::with(['user', 'items'])
-                ->orderBy('created_at', 'desc')
-                ->limit($limit)
-                ->get();
-        });
+        $orders = Order::with(['user', 'items'])
+            ->orderBy('created_at', 'desc')
+            ->limit($limit)
+            ->get();
 
         return response()->json($orders);
     }
 
-    // Cache debugging methods
-    public function debugOrderCache($key)
+    public function completeOrder(Request $request, Order $order)
     {
-        $exists = Cache::has($key);
-        $data = Cache::get($key);
-        $ttl = Cache::getRedis()->ttl(Cache::getPrefix() . $key);
-
-        return [
-            'key' => $key,
-            'exists' => $exists,
-            'ttl_seconds' => $ttl,
-            'data_sample' => $exists ? (is_array($data) ? array_slice($data, 0, 2) : $data) : null
-        ];
-    }
-
-    public function getOrderCacheKeys()
-    {
-        $keys = Cache::getRedis()->keys('*order*');
-
-        $cacheInfo = [];
-        foreach ($keys as $key) {
-            $cleanKey = str_replace('laravel_database_', '', $key);
-            $ttl = Cache::getRedis()->ttl($key);
-            $size = strlen(serialize(Cache::get($cleanKey)));
-            $cacheInfo[] = [
-                'key' => $cleanKey,
-                'ttl' => $ttl,
-                'size_bytes' => $size,
-                'size_human' => $this->formatBytes($size)
-            ];
+        // Verify the order belongs to the current user
+        if ($order->user_id !== Auth::id()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'You can only complete your own orders'
+            ], 403);
         }
 
-        return $cacheInfo;
-    }
+        // Check for any existing payment
+        $hasPayment = $order->payments()->exists();
 
-    private function formatBytes($bytes, $precision = 2)
-    {
-        $units = ['B', 'KB', 'MB', 'GB', 'TB'];
-        $bytes = max($bytes, 0);
-        $pow = floor(($bytes ? log($bytes) : 0) / log(1024));
-        $pow = min($pow, count($units) - 1);
-        $bytes /= pow(1024, $pow);
+        // For COD payments, allow completion with pending payment status
+        $hasCODPayment = $order->payments()
+            ->where('payment_method', 'cod')
+            ->exists();
 
-        return round($bytes, $precision) . ' ' . $units[$pow];
+        // For online payments, require successful payment
+        $hasSuccessfulPayment = $order->payments()
+            ->where('status', 'completed')
+            ->exists();
+
+        // Allow completion if:
+        // 1. There's a successful payment (online payments) OR
+        // 2. There's a COD payment (any status is OK for COD)
+        if (!$hasSuccessfulPayment && !$hasCODPayment) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Cannot complete order without successful payment or COD payment'
+            ], 400);
+        }
+
+        // Update order status based on payment type
+        $newStatus = $hasCODPayment ? 'processing' : 'completed';
+
+        $order->update(['status' => $newStatus]);
+
+        // Notify about order completion
+        $this->notify->notifyOrderStatusChanged($order);
+
+        return response()->json([
+            'success' => true,
+            'message' => $hasCODPayment
+                ? 'Order placed successfully. Payment will be collected on delivery.'
+                : 'Order completed successfully',
+            'order' => $order
+        ]);
     }
 }

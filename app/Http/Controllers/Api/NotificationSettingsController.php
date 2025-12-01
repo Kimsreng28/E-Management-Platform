@@ -9,6 +9,18 @@ use Illuminate\Support\Facades\Auth;
 
 class NotificationSettingsController extends Controller
 {
+    // Admin role
+    private function isAdmin()
+    {
+        return Auth::check() && Auth::user()->role_id === 1;
+    }
+
+    // Vendor role
+    private function isVendor()
+    {
+        return Auth::check() && Auth::user()->role_id === 4;
+    }
+
     public function index()
     {
         $user = Auth::user();

@@ -115,6 +115,11 @@ class User extends Authenticatable implements MustVerifyEmail
         return $this->belongsToMany(Product::class, 'wishlists');
     }
 
+    public function shop()
+    {
+        return $this->hasOne(Shop::class, 'vendor_id');
+    }
+
    public function sessions()
     {
         return DB::table('sessions')
@@ -190,12 +195,22 @@ class User extends Authenticatable implements MustVerifyEmail
 
     public function isDelivery(): bool
     {
-        return $this->role_id === 3; // Assuming delivery role ID is 3
+        return $this->role_id === 5; // Assuming delivery role ID is 3
     }
 
     public function isCustomer(): bool
     {
         return $this->role_id === 2; // Customer role ID is 2
+    }
+
+    public function isVendor(): bool
+    {
+        return $this->role_id === 4; // Vendor role ID is 4
+    }
+
+    public function isAdmin(): bool
+    {
+        return $this->role_id === 1; // Assuming admin role ID is 1
     }
 
     public function deliveries()
@@ -218,6 +233,7 @@ class User extends Authenticatable implements MustVerifyEmail
 
     public function sendEmailVerificationNotification()
     {
+
         $this->notify(new \App\Notifications\VerifyEmail);
     }
 
@@ -230,6 +246,35 @@ class User extends Authenticatable implements MustVerifyEmail
     {
         return !is_null($this->email_verified_at);
     }
+
+    // New here
+    public function hasPermission($permission): bool
+    {
+        if ($this->isAdmin()) {
+            return true; // Admin has all permissions
+        }
+
+        return $this->role->permissions()->where('name', $permission)->exists();
+    }
+
+    public function hasAnyPermission($permissions): bool
+    {
+        if ($this->isAdmin()) {
+            return true;
+        }
+
+        return $this->role->permissions()->whereIn('name', (array)$permissions)->exists();
+    }
+
+    public function hasAllPermissions($permissions): bool
+    {
+        if ($this->isAdmin()) {
+            return true;
+        }
+
+        return $this->role->permissions()->whereIn('name', (array)$permissions)->count() === count((array)$permissions);
+    }
+
 
     // public function markEmailAsVerified(): bool
     // {

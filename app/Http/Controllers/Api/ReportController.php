@@ -4,7 +4,6 @@ namespace App\Http\Controllers\Api;
 
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
-use Illuminate\Support\Facades\Cache;
 use App\Models\User;
 use App\Models\Order;
 use App\Models\Product;
@@ -19,24 +18,6 @@ use Carbon\Carbon;
 
 class ReportController extends Controller
 {
-    // Cache durations in seconds
-    private $cacheDurations = [
-        'sales_overview' => 300, // 5 minutes
-        'sales_report' => 600, // 10 minutes
-        'product_performance' => 900, // 15 minutes
-        'inventory_report' => 1800, // 30 minutes
-        'customer_analysis' => 1200, // 20 minutes
-    ];
-
-    // Clear report caches
-    private function clearReportCaches()
-    {
-        $keys = Cache::getRedis()->keys('*report*');
-        foreach ($keys as $key) {
-            Cache::forget(str_replace('laravel_database_', '', $key));
-        }
-    }
-
     // Helper method to calculate date ranges
     private function getDateRange($period, $customRange = null)
     {
@@ -87,45 +68,91 @@ class ReportController extends Controller
         ];
     }
 
+    // Helper method to apply vendor filter
+    private function applyVendorFilter($query, $user)
+    {
+        if ($user->isVendor()) {
+            $query->whereHas('items.product', function ($q) use ($user) {
+                $q->where('vendor_id', $user->id);
+            });
+        }
+        return $query;
+    }
+
+    // Helper method to apply vendor filter to product queries
+    private function applyVendorProductFilter($query, $user)
+    {
+        if ($user->isVendor()) {
+            $query->where('vendor_id', $user->id);
+        }
+        return $query;
+    }
+
     // Sales Overview (stats for dashboard)
     public function salesOverview(Request $request)
     {
+        $user = $request->user();
         $period = $request->get('period', 'month');
         $customRange = $request->get('custom_range');
 
-        $cacheKey = 'report:sales-overview:' . md5(serialize([$period, $customRange]));
+        $dateRange = $this->getDateRange($period, $customRange);
+        $start = $dateRange['start'];
+        $end = $dateRange['end'];
 
-        $data = Cache::remember($cacheKey, $this->cacheDurations['sales_overview'], function () use ($period, $customRange) {
-            $dateRange = $this->getDateRange($period, $customRange);
-            $start = $dateRange['start'];
-            $end = $dateRange['end'];
+        // Base query for orders
+        $orderQuery = Order::whereBetween('created_at', [$start, $end]);
+        $orderQuery = $this->applyVendorFilter($orderQuery, $user);
 
-            $totalRevenue = Order::whereBetween('created_at', [$start, $end])->sum('total');
-            $totalOrders = Order::whereBetween('created_at', [$start, $end])->count();
-            $newCustomers = User::whereBetween('created_at', [$start, $end])->count();
-            $avgOrderValue = $totalOrders > 0 ? $totalRevenue / $totalOrders : 0;
-
-            // Calculate previous period for comparison
-            $daysDiff = $end->diffInDays($start);
-            $prevStart = $start->copy()->subDays($daysDiff + 1);
-            $prevEnd = $start->copy()->subDay();
-
-            $prevRevenue = Order::whereBetween('created_at', [$prevStart, $prevEnd])->sum('total');
-            $prevOrders = Order::whereBetween('created_at', [$prevStart, $prevEnd])->count();
-            $prevCustomers = User::whereBetween('created_at', [$prevStart, $prevEnd])->count();
-            $prevAvgOrderValue = $prevOrders > 0 ? $prevRevenue / $prevOrders : 0;
-
-            return [
-                'totalRevenue' => $totalRevenue,
-                'revenueChange' => $prevRevenue != 0 ? round(($totalRevenue - $prevRevenue)/$prevRevenue*100, 2) : ($totalRevenue > 0 ? 100 : 0),
-                'totalOrders' => $totalOrders,
-                'ordersChange' => $prevOrders != 0 ? round(($totalOrders - $prevOrders)/$prevOrders*100, 2) : ($totalOrders > 0 ? 100 : 0),
-                'newCustomers' => $newCustomers,
-                'customersChange' => $prevCustomers != 0 ? round(($newCustomers - $prevCustomers)/$prevCustomers*100, 2) : ($newCustomers > 0 ? 100 : 0),
-                'avgOrderValue' => round($avgOrderValue, 2),
-                'avgOrderValueChange' => $prevAvgOrderValue != 0 ? round(($avgOrderValue - $prevAvgOrderValue)/$prevAvgOrderValue*100, 2) : ($avgOrderValue > 0 ? 100 : 0),
-            ];
+        $totalRevenue = $orderQuery->sum('total');
+        $totalOrders = $orderQuery->count();
+        
+        // For new customers, vendors can only see customers who bought their products
+        $newCustomersQuery = User::whereHas('orders', function($q) use ($start, $end, $user) {
+            $q->whereBetween('created_at', [$start, $end]);
+            if ($user->isVendor()) {
+                $q->whereHas('items.product', function($pq) use ($user) {
+                    $pq->where('vendor_id', $user->id);
+                });
+            }
         });
+        $newCustomers = $newCustomersQuery->count();
+
+        $avgOrderValue = $totalOrders > 0 ? $totalRevenue / $totalOrders : 0;
+
+        // Calculate previous period for comparison
+        $daysDiff = $end->diffInDays($start);
+        $prevStart = $start->copy()->subDays($daysDiff + 1);
+        $prevEnd = $start->copy()->subDay();
+
+        // Previous period queries with vendor filter
+        $prevOrderQuery = Order::whereBetween('created_at', [$prevStart, $prevEnd]);
+        $prevOrderQuery = $this->applyVendorFilter($prevOrderQuery, $user);
+
+        $prevRevenue = $prevOrderQuery->sum('total');
+        $prevOrders = $prevOrderQuery->count();
+        
+        $prevCustomersQuery = User::whereHas('orders', function($q) use ($prevStart, $prevEnd, $user) {
+            $q->whereBetween('created_at', [$prevStart, $prevEnd]);
+            if ($user->isVendor()) {
+                $q->whereHas('items.product', function($pq) use ($user) {
+                    $pq->where('vendor_id', $user->id);
+                });
+            }
+        });
+        $prevCustomers = $prevCustomersQuery->count();
+        
+        $prevAvgOrderValue = $prevOrders > 0 ? $prevRevenue / $prevOrders : 0;
+
+        $data = [
+            'totalRevenue' => $totalRevenue,
+            'revenueChange' => $prevRevenue != 0 ? round(($totalRevenue - $prevRevenue)/$prevRevenue*100, 2) : ($totalRevenue > 0 ? 100 : 0),
+            'totalOrders' => $totalOrders,
+            'ordersChange' => $prevOrders != 0 ? round(($totalOrders - $prevOrders)/$prevOrders*100, 2) : ($totalOrders > 0 ? 100 : 0),
+            'newCustomers' => $newCustomers,
+            'customersChange' => $prevCustomers != 0 ? round(($newCustomers - $prevCustomers)/$prevCustomers*100, 2) : ($newCustomers > 0 ? 100 : 0),
+            'avgOrderValue' => round($avgOrderValue, 2),
+            'avgOrderValueChange' => $prevAvgOrderValue != 0 ? round(($avgOrderValue - $prevAvgOrderValue)/$prevAvgOrderValue*100, 2) : ($avgOrderValue > 0 ? 100 : 0),
+        ];
 
         return response()->json($data);
     }
@@ -133,41 +160,41 @@ class ReportController extends Controller
     // Sales Report
     public function salesReport(Request $request)
     {
+        $user = $request->user();
         $period = $request->get('period', 'month');
         $customRange = $request->get('custom_range');
 
-        $cacheKey = 'report:sales-report:' . md5(serialize([$period, $customRange]));
+        $dateRange = $this->getDateRange($period, $customRange);
+        $start = $dateRange['start'];
+        $end = $dateRange['end'];
 
-        $salesDataWithGrowth = Cache::remember($cacheKey, $this->cacheDurations['sales_report'], function () use ($period, $customRange) {
-            $dateRange = $this->getDateRange($period, $customRange);
-            $start = $dateRange['start'];
-            $end = $dateRange['end'];
+        $salesQuery = Order::select(
+                DB::raw('DATE(created_at) as date'),
+                DB::raw('SUM(total) as revenue'),
+                DB::raw('COUNT(*) as orders'),
+                DB::raw('COUNT(DISTINCT user_id) as new_customers')
+            )
+            ->whereBetween('created_at', [$start, $end]);
 
-            $salesData = Order::select(
-                    DB::raw('DATE(created_at) as date'),
-                    DB::raw('SUM(total) as revenue'),
-                    DB::raw('COUNT(*) as orders'),
-                    DB::raw('COUNT(DISTINCT user_id) as new_customers')
-                )
-                ->whereBetween('created_at', [$start, $end])
-                ->groupBy('date')
-                ->orderBy('date')
-                ->get();
+        $salesQuery = $this->applyVendorFilter($salesQuery, $user);
 
-            // Calculate growth percentage for each day
-            $previousRevenue = 0;
-            return $salesData->map(function ($item) use (&$previousRevenue) {
-                $growth = $previousRevenue > 0 ? (($item->revenue - $previousRevenue) / $previousRevenue) * 100 : 0;
-                $previousRevenue = $item->revenue;
+        $salesData = $salesQuery->groupBy('date')
+            ->orderBy('date')
+            ->get();
 
-                return [
-                    'period' => $item->date,
-                    'revenue' => $item->revenue,
-                    'orders' => $item->orders,
-                    'new_customers' => $item->new_customers,
-                    'growth' => round($growth, 2)
-                ];
-            });
+        // Calculate growth percentage for each day
+        $previousRevenue = 0;
+        $salesDataWithGrowth = $salesData->map(function ($item) use (&$previousRevenue) {
+            $growth = $previousRevenue > 0 ? (($item->revenue - $previousRevenue) / $previousRevenue) * 100 : 0;
+            $previousRevenue = $item->revenue;
+
+            return [
+                'period' => $item->date,
+                'revenue' => $item->revenue,
+                'orders' => $item->orders,
+                'new_customers' => $item->new_customers,
+                'growth' => round($growth, 2)
+            ];
         });
 
         return response()->json($salesDataWithGrowth);
@@ -177,36 +204,51 @@ class ReportController extends Controller
     public function productPerformance(Request $request)
     {
         try {
+            $user = $request->user();
             $period = $request->get('period', 'month');
             $customRange = $request->get('custom_range');
 
-            $cacheKey = 'report:product-performance:' . md5(serialize([$period, $customRange]));
+            $dateRange = $this->getDateRange($period, $customRange);
+            $start = $dateRange['start'];
+            $end = $dateRange['end'];
 
-            $productPerformance = Cache::remember($cacheKey, $this->cacheDurations['product_performance'], function () use ($period, $customRange) {
-                $dateRange = $this->getDateRange($period, $customRange);
-                $start = $dateRange['start'];
-                $end = $dateRange['end'];
+            $productQuery = Product::with('category');
 
-                $products = Product::with('category')
-                    ->withCount(['orderItems as units_sold' => function($q) use ($start, $end) {
-                        $q->whereHas('order', fn($oq) => $oq->whereBetween('created_at', [$start, $end]));
-                    }])
-                    ->withSum(['orderItems as revenue' => function($q) use ($start, $end) {
-                        $q->whereHas('order', fn($oq) => $oq->whereBetween('created_at', [$start, $end]));
-                    }], DB::raw('order_items.quantity * products.price'))
-                    ->get()
-                    ->filter(fn($p) => $p->units_sold > 0);
+            // Apply vendor filter to products
+            $productQuery = $this->applyVendorProductFilter($productQuery, $user);
 
-                $totalRevenue = $products->sum('revenue');
+            $products = $productQuery->withCount(['orderItems as units_sold' => function($q) use ($start, $end, $user) {
+                    $q->whereHas('order', function($oq) use ($start, $end, $user) {
+                        $oq->whereBetween('created_at', [$start, $end]);
+                        if ($user->isVendor()) {
+                            $oq->whereHas('items.product', function($pq) use ($user) {
+                                $pq->where('vendor_id', $user->id);
+                            });
+                        }
+                    });
+                }])
+                ->withSum(['orderItems as revenue' => function($q) use ($start, $end, $user) {
+                    $q->whereHas('order', function($oq) use ($start, $end, $user) {
+                        $oq->whereBetween('created_at', [$start, $end]);
+                        if ($user->isVendor()) {
+                            $oq->whereHas('items.product', function($pq) use ($user) {
+                                $pq->where('vendor_id', $user->id);
+                            });
+                        }
+                    });
+                }], DB::raw('order_items.quantity * products.price'))
+                ->get()
+                ->filter(fn($p) => $p->units_sold > 0);
 
-                return $products->map(fn($product) => [
-                    'product' => $product->name,
-                    'category' => $product->category?->name ?? 'N/A',
-                    'units_sold' => $product->units_sold,
-                    'revenue' => $product->revenue,
-                    'performance' => $totalRevenue > 0 ? round(($product->revenue / $totalRevenue) * 100, 2) : 0
-                ]);
-            });
+            $totalRevenue = $products->sum('revenue');
+
+            $productPerformance = $products->map(fn($product) => [
+                'product' => $product->name,
+                'category' => $product->category?->name ?? 'N/A',
+                'units_sold' => $product->units_sold,
+                'revenue' => $product->revenue,
+                'performance' => $totalRevenue > 0 ? round(($product->revenue / $totalRevenue) * 100, 2) : 0
+            ]);
 
             return response()->json($productPerformance);
         } catch (\Exception $e) {
@@ -217,33 +259,32 @@ class ReportController extends Controller
     // Inventory Report
     public function inventoryReport(Request $request)
     {
+        $user = $request->user();
         $lowStockThreshold = $request->get('threshold', 10);
 
-        $cacheKey = 'report:inventory:' . $lowStockThreshold;
+        $productQuery = Product::query();
+        $productQuery = $this->applyVendorProductFilter($productQuery, $user);
+        $products = $productQuery->get();
 
-        $inventory = Cache::remember($cacheKey, $this->cacheDurations['inventory_report'], function () use ($lowStockThreshold) {
-            $products = Product::all();
+        $inventory = $products->map(function($p) use ($lowStockThreshold) {
+            $status = 'In Stock';
+            $action = 'None';
 
-            return $products->map(function($p) use ($lowStockThreshold) {
-                $status = 'In Stock';
-                $action = 'None';
+            if ($p->stock <= 0) {
+                $status = 'Out of Stock';
+                $action = 'Restock Immediately';
+            } elseif ($p->stock <= $lowStockThreshold) {
+                $status = 'Low Stock';
+                $action = 'Consider Restocking';
+            }
 
-                if ($p->stock <= 0) {
-                    $status = 'Out of Stock';
-                    $action = 'Restock Immediately';
-                } elseif ($p->stock <= $lowStockThreshold) {
-                    $status = 'Low Stock';
-                    $action = 'Consider Restocking';
-                }
-
-                return [
-                    'product' => $p->name,
-                    'current_stock' => $p->stock,
-                    'threshold' => $lowStockThreshold,
-                    'status' => $status,
-                    'action_needed' => $action
-                ];
-            });
+            return [
+                'product' => $p->name,
+                'current_stock' => $p->stock,
+                'threshold' => $lowStockThreshold,
+                'status' => $status,
+                'action_needed' => $action
+            ];
         });
 
         return response()->json($inventory);
@@ -253,33 +294,61 @@ class ReportController extends Controller
     public function customerAnalysis(Request $request)
     {
         try {
+            $user = $request->user();
             $period = $request->get('period', 'month');
             $customRange = $request->get('custom_range');
 
-            $cacheKey = 'report:customer-analysis:' . md5(serialize([$period, $customRange]));
+            $dateRange = $this->getDateRange($period, $customRange);
+            $start = $dateRange['start'];
+            $end = $dateRange['end'];
 
-            $customerAnalysis = Cache::remember($cacheKey, $this->cacheDurations['customer_analysis'], function () use ($period, $customRange) {
-                $dateRange = $this->getDateRange($period, $customRange);
-                $start = $dateRange['start'];
-                $end = $dateRange['end'];
+            $customerQuery = User::query();
 
-                $customers = User::withCount(['orders as total_orders' => fn($q) => $q->whereBetween('created_at', [$start, $end])])
-                    ->withSum(['orders as total_revenue' => fn($q) => $q->whereBetween('created_at', [$start, $end])], 'total')
-                    ->with(['orders' => fn($q) => $q->whereBetween('created_at', [$start, $end])->orderBy('created_at', 'desc')->limit(1)])
-                    ->get()
-                    ->filter(fn($c) => $c->total_orders > 0);
+            // For vendors, only show customers who bought their products
+            if ($user->isVendor()) {
+                $customerQuery->whereHas('orders.items.product', function($q) use ($user) {
+                    $q->where('vendor_id', $user->id);
+                });
+            }
 
-                $avgOrderValue = $customers->avg('total_revenue') ?? 0;
+            $customers = $customerQuery->withCount(['orders as total_orders' => function($q) use ($start, $end, $user) {
+                    $q->whereBetween('created_at', [$start, $end]);
+                    if ($user->isVendor()) {
+                        $q->whereHas('items.product', function($pq) use ($user) {
+                            $pq->where('vendor_id', $user->id);
+                        });
+                    }
+                }])
+                ->withSum(['orders as total_revenue' => function($q) use ($start, $end, $user) {
+                    $q->whereBetween('created_at', [$start, $end]);
+                    if ($user->isVendor()) {
+                        $q->whereHas('items.product', function($pq) use ($user) {
+                            $pq->where('vendor_id', $user->id);
+                        });
+                    }
+                }], 'total')
+                ->with(['orders' => function($q) use ($start, $end, $user) {
+                    $q->whereBetween('created_at', [$start, $end]);
+                    if ($user->isVendor()) {
+                        $q->whereHas('items.product', function($pq) use ($user) {
+                            $pq->where('vendor_id', $user->id);
+                        });
+                    }
+                    $q->orderBy('created_at', 'desc')->limit(1);
+                }])
+                ->get()
+                ->filter(fn($c) => $c->total_orders > 0);
 
-                return $customers->map(fn($customer) => [
-                    'customer' => $customer->name,
-                    'total_orders' => $customer->total_orders,
-                    'total_revenue' => $customer->total_revenue,
-                    'last_order' => $customer->orders->first()?->created_at?->format('Y-m-d') ?? 'N/A',
-                    'customer_value' => $customer->total_revenue > $avgOrderValue * 2 ? 'High Value' :
-                                       ($customer->total_revenue > $avgOrderValue ? 'Medium Value' : 'Standard')
-                ]);
-            });
+            $avgOrderValue = $customers->avg('total_revenue') ?? 0;
+
+            $customerAnalysis = $customers->map(fn($customer) => [
+                'customer' => $customer->name,
+                'total_orders' => $customer->total_orders,
+                'total_revenue' => $customer->total_revenue,
+                'last_order' => $customer->orders->first()?->created_at?->format('Y-m-d') ?? 'N/A',
+                'customer_value' => $customer->total_revenue > $avgOrderValue * 2 ? 'High Value' :
+                                   ($customer->total_revenue > $avgOrderValue ? 'Medium Value' : 'Standard')
+            ]);
 
             return response()->json($customerAnalysis);
         } catch (\Exception $e) {
@@ -291,6 +360,7 @@ class ReportController extends Controller
     public function exportReport(Request $request, $type)
     {
         try {
+            $user = $request->user();
             $reportType = $request->get('report_type');
             $data = [];
             $filename = '';
@@ -321,12 +391,22 @@ class ReportController extends Controller
                     return response()->json(['error' => 'Invalid report type'], 400);
             }
 
+            // Add vendor-specific filename
+            if ($user->isVendor()) {
+                $filename .= '_vendor_' . $user->id;
+            }
+
             if ($type === 'csv') {
                 $csv = Writer::createFromFileObject(new SplTempFileObject());
                 $csv->insertOne($headers);
+                
+                // Add row numbers
+                $rowNumber = 1;
                 foreach ($data as $row) {
-                    $csv->insertOne(array_values((array)$row));
+                    $csv->insertOne(array_merge([$rowNumber], array_values((array)$row)));
+                    $rowNumber++;
                 }
+                
                 return response((string)$csv, 200, [
                     'Content-Type' => 'text/csv',
                     'Content-Disposition' => 'attachment; filename="'.$filename.'.csv"',
@@ -336,6 +416,7 @@ class ReportController extends Controller
                     'data' => $data,
                     'headers' => $headers,
                     'title' => ucfirst(str_replace('_', ' ', $filename)),
+                    'user' => $user
                 ]);
                 return $pdf->download($filename.'.pdf');
             }

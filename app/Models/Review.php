@@ -36,4 +36,9 @@ class Review extends Model
     {
         return $this->belongsTo(Order::class);
     }
+
+    public function replies()
+    {
+        return $this->hasMany(ReviewReply::class);
+    }
 }

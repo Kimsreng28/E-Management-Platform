@@ -30,12 +30,18 @@ class Product extends Model
         'stock_status',
         'discount',
         'barcode',
+        'vendor_id',
+        'shop_id',
+        'discount_start_at',
+        'discount_end_at',
     ];
 
     protected $casts = [
         'is_featured' => 'boolean',
         'is_active' => 'boolean',
         'specifications' => 'array',
+        'discount_start_at' => 'datetime',
+        'discount_end_at' => 'datetime',
     ];
 
     protected $appends = ['discounted_price', 'is_new'];
@@ -93,6 +99,25 @@ class Product extends Model
         return $this->belongsTo(User::class, 'created_by');
     }
 
+    public function vendor()
+    {
+        return $this->belongsTo(User::class, 'vendor_id');
+    }
+
+    public function getBusinessSettingsAttribute()
+    {
+        if ($this->vendor_id) {
+            return BusinessSetting::where('user_id', $this->vendor_id)->first();
+        }
+        
+        return BusinessSetting::where('user_id', 1)->first(); // Admin fallback
+    }
+
+    public function shop()
+    {
+        return $this->belongsTo(Shop::class);
+    }
+
     // Product main image
     public function getMainImageAttribute()
     {
@@ -113,14 +138,22 @@ class Product extends Model
 
         // fallback to business setting if product threshold is null
         if ($threshold === null) {
-            $businessSettings = BusinessSetting::where('user_id', $this->created_by)->first();
+            // Try vendor settings first, then created_by, then admin
+            if ($this->vendor_id) {
+                $businessSettings = BusinessSetting::where('user_id', $this->vendor_id)->first();
+            } elseif ($this->created_by) {
+                $businessSettings = BusinessSetting::where('user_id', $this->created_by)->first();
+            } else {
+                $businessSettings = BusinessSetting::where('user_id', 1)->first();
+            }
+            
             $threshold = $businessSettings->low_stock_threshold ?? 10;
         }
 
         if ($this->stock <= 0) {
             return 'Out of Stock';
         } elseif ($this->stock <= $threshold) {
-            return 'Inactive';
+            return 'Low Stock'; // Changed from 'Inactive' to 'Low Stock'
         }
 
         return 'Active';
@@ -131,12 +164,20 @@ class Product extends Model
     {
         $threshold = $this->low_stock_threshold;
         if ($threshold === null) {
-            $businessSettings = BusinessSetting::where('user_id', $this->created_by)->first();
+            // Try vendor settings first, then created_by, then admin
+            if ($this->vendor_id) {
+                $businessSettings = BusinessSetting::where('user_id', $this->vendor_id)->first();
+            } elseif ($this->created_by) {
+                $businessSettings = BusinessSetting::where('user_id', $this->created_by)->first();
+            } else {
+                $businessSettings = BusinessSetting::where('user_id', 1)->first();
+            }
+            
             $threshold = $businessSettings->low_stock_threshold ?? 10;
         }
 
         return $this->stock > 0 && $this->stock <= $threshold;
-    }
+    }   
 
     // Get discounted price
     public function getDiscountedPriceAttribute()
@@ -230,4 +271,58 @@ class Product extends Model
             ->format('svg')
             ->generate($this->barcode);
     }
+
+    // New here
+    public function getIsDiscountActiveAttribute(): bool
+    {
+        if (!$this->discount || $this->discount <= 0) {
+            return false;
+        }
+
+        $now = now();
+
+        // If no time range is set, discount is always active
+        if (!$this->discount_start_at && !$this->discount_end_at) {
+            return true;
+        }
+
+        // Check if current time is within discount period
+        if ($this->discount_start_at && $this->discount_end_at) {
+            return $now->between($this->discount_start_at, $this->discount_end_at);
+        }
+
+        if ($this->discount_start_at && !$this->discount_end_at) {
+            return $now->gte($this->discount_start_at);
+        }
+
+        if (!$this->discount_start_at && $this->discount_end_at) {
+            return $now->lte($this->discount_end_at);
+        }
+
+        return false;
+    }
+
+    public function getEffectiveDiscountAttribute(): float
+    {
+        return $this->is_discount_active ? (float) $this->discount : 0;
+    }
+
+    public function scopeWithActiveDiscount($query)
+    {
+        return $query->where('discount', '>', 0)
+            ->where(function($q) {
+                $q->whereNull('discount_start_at')
+                ->orWhere('discount_start_at', '<=', now());
+            })
+            ->where(function($q) {
+                $q->whereNull('discount_end_at')
+                ->orWhere('discount_end_at', '>=', now());
+            });
+    }
+
+    public function scopeVendorProducts($query, $vendorId)
+    {
+        return $query->where('vendor_id', $vendorId);
+    }
+
 }
