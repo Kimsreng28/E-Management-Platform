@@ -535,10 +535,12 @@ class OrderController extends Controller
         try {
             $pdf = PDF::loadView('invoices.template', compact('order'));
 
+            $frontendUrl = config('app.frontend_url',  env('NEXT_PUBLIC_FRONTEND_URL', 'http://localhost:3000'), env('FRONTEND_URL'));
+
             $headers = [
                 'Content-Type'              => 'application/pdf',
                 'Content-Disposition'       => "attachment; filename=invoice-{$order->id}.pdf",
-                'Access-Control-Allow-Origin' => 'http://127.0.0.1:3000', // frontend
+                'Access-Control-Allow-Origin' => $frontendUrl, // frontend
                 'Access-Control-Allow-Methods' => 'GET, OPTIONS',
                 'Access-Control-Allow-Headers' => 'Authorization, Content-Type',
                 'Access-Control-Expose-Headers' => 'Content-Disposition',

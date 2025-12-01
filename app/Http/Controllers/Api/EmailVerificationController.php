@@ -98,7 +98,7 @@ class EmailVerificationController extends Controller
      */
     private function redirectToFrontend(string $status, string $message)
     {
-        $frontendUrl = config('app.frontend_url', 'http://127.0.0.1:3000');
+        $frontendUrl = config('app.frontend_url', 'http://127.0.0.1:3000', env('NEXT_PUBLIC_FRONTEND_URL', 'http://localhost:3000'), env('FRONTEND_URL'));
         $locale = 'en'; // You can make this dynamic if needed
 
         $url = "{$frontendUrl}/{$locale}/auth/verification-{$status}?message=" . urlencode($message);
