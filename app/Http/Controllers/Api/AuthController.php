@@ -346,7 +346,7 @@ class AuthController extends Controller
             $token = $user->createToken('api_token')->plainTextToken;
 
             $locale = 'en'; // or detect dynamically
-            $frontendUrl = "http://localhost:3000/{$locale}/auth/callback?token=" . urlencode($token);
+            $frontendUrl = config('app.frontend_url') . "/{$locale}/auth/callback?token=" . urlencode($token);
             return redirect($frontendUrl);
         } catch (\Exception $e) {
             return response()->json([
