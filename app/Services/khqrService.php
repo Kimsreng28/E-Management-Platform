@@ -7,26 +7,64 @@ use KHQR\Models\IndividualInfo;
 use KHQR\Helpers\KHQRData;
 use Exception;
 use App\Models\Payment;
+use App\Models\BusinessSetting;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
 
 class KhqrService
 {
     protected $bakongKHQR;
 
-    public function __construct()
+    public function __construct($userId = null)
     {
-        $token = env('BAKONG_API_TOKEN');
+        // $token = env('BAKONG_API_TOKEN');
+        // if ($token) {
+        //     $this->bakongKHQR = new BakongKHQR($token);
+        // }
+        $token = $this->getUserToken($userId);
         if ($token) {
             $this->bakongKHQR = new BakongKHQR($token);
         }
     }
 
     /**
-     * Generate KHQR for individual payments
+     * Get KHQR API token from user's business settings
      */
-    public function generateIndividualKHQR($merchantName, $merchantAccount, $amount, $currency, $orderId = null)
+    private function getUserToken($userId = null)
     {
         try {
+            if (!$userId) {
+                // Get current authenticated user
+                $userId = Auth::id();
+            }
+
+            $settings = BusinessSetting::where('user_id', $userId)->first();
+
+            if ($settings && $settings->khqr_enabled && $settings->khqr_api_token) {
+                return $settings->khqr_api_token;
+            }
+
+            // Fallback to env if no user-specific token
+            return env('BAKONG_API_TOKEN');
+
+        } catch (Exception $e) {
+            Log::error('Error getting KHQR token', ['error' => $e->getMessage()]);
+            return env('BAKONG_API_TOKEN');
+        }
+    }
+
+    /**
+     * Generate KHQR for individual payments
+     */
+    public function generateIndividualKHQR($merchantName, $merchantAccount, $amount, $currency, $orderId = null, $userId = null)
+    {
+        try {
+            // Get user-specific token
+            $token = $this->getUserToken($userId);
+            if (!$token) {
+                throw new Exception('KHQR API token not configured');
+            }
+
             $currencyConstant = $this->mapCurrency($currency);
 
             $individualInfo = new IndividualInfo(
@@ -37,7 +75,9 @@ class KhqrService
                 amount: $amount
             );
 
-            $response = BakongKHQR::generateIndividual($individualInfo);
+            // Initialize with user-specific token
+            $bakongKHQR = new BakongKHQR($token);
+            $response = $bakongKHQR->generateIndividual($individualInfo);
 
             if ($response->status['code'] !== 0) {
                 throw new Exception($response->status['message'] ?? 'Unknown error');
@@ -59,7 +99,7 @@ class KhqrService
     /**
      * Check payment status using MD5 hash
      */
-    public function checkPaymentStatus($paymentId, $md5Hash)
+    public function checkPaymentStatus($paymentId, $md5Hash, $userId = null)
     {
         try {
             $payment = Payment::with('order')->find($paymentId);
@@ -68,7 +108,15 @@ class KhqrService
                 return ['success' => false, 'error' => 'Payment not found'];
             }
 
-            // Append payment to response ALWAYS
+            // Get user-specific token
+            $token = $this->getUserToken($userId);
+            if (!$token) {
+                throw new Exception('KHQR API token not configured');
+            }
+
+            // Initialize with user-specific token
+            $bakongKHQR = new BakongKHQR($token);
+
             $baseResponse = [
                 'success' => true,
                 'payment' => $payment,
@@ -82,8 +130,8 @@ class KhqrService
             }
 
             // If user provided md5 hash, check with Bakong
-            if ($md5Hash && $this->bakongKHQR) {
-                $response = $this->bakongKHQR->checkTransactionByMD5($md5Hash);
+            if ($md5Hash && $bakongKHQR) {
+                $response = $bakongKHQR->checkTransactionByMD5($md5Hash);
 
                 if (!empty($response['data'])) {
                     $payment->update([
@@ -117,14 +165,21 @@ class KhqrService
         }
     }
 
-
     /**
      * Check if Bakong account exists
      */
-    public function checkBakongAccount($accountId)
+    public function checkBakongAccount($accountId, $userId = null)
     {
         try {
-            $response = BakongKHQR::checkBakongAccount($accountId);
+            // Get user-specific token
+            $token = $this->getUserToken($userId);
+            if (!$token) {
+                throw new Exception('KHQR API token not configured');
+            }
+
+            // Initialize with user-specific token
+            $bakongKHQR = new BakongKHQR($token);
+            $response = $bakongKHQR->checkBakongAccount($accountId);
 
             return [
                 'success' => true,
@@ -139,17 +194,21 @@ class KhqrService
     /**
      * Only used if your app needs decoding
      */
-    public function decode($qr)
+    public function decode($qr, $userId = null)
     {
-        return BakongKHQR::decode($qr);
+        $token = $this->getUserToken($userId);
+        $bakongKHQR = new BakongKHQR($token);
+        return $bakongKHQR->decode($qr);
     }
 
     /**
      * Only used if your app needs CRC verification
      */
-    public function verify($qr)
+    public function verify($qr, $userId = null)
     {
-        return BakongKHQR::verify($qr);
+        $token = $this->getUserToken($userId);
+        $bakongKHQR = new BakongKHQR($token);
+        return $bakongKHQR->verify($qr);
     }
 
     /**

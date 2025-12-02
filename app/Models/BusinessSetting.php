@@ -27,6 +27,7 @@ class BusinessSetting extends Model
         'khqr_enabled',
         'khqr_merchant_name',
         'khqr_merchant_account',
+        'khqr_api_token',
         'paypal_enabled',
         'paypal_client_id',
         'paypal_client_secret',
@@ -42,6 +43,18 @@ class BusinessSetting extends Model
         'paypal_sandbox' => 'boolean',
         'tax_rate' => 'float',
     ];
+
+    // Mutator to encrypt the token when saving
+    public function setKhqrApiTokenAttribute($value)
+    {
+        $this->attributes['khqr_api_token'] = $value ? encrypt($value) : null;
+    }
+
+    // Accessor to decrypt the token when retrieving
+    public function getKhqrApiTokenAttribute($value)
+    {
+        return $value ? decrypt($value) : null;
+    }
 
     public function user()
     {

@@ -69,6 +69,7 @@ class BusinessSettingController extends Controller
             'khqr_enabled' => 'required|boolean',
             'khqr_merchant_name' => 'required_if:khqr_enabled,true|nullable|string|max:255',
             'khqr_merchant_account' => 'required_if:khqr_enabled,true|nullable|string|max:255',
+            'khqr_api_token' => 'required_if:khqr_enabled,true|nullable|string',
 
             'paypal_enabled' => 'required|boolean',
             'paypal_client_id' => 'required_if:paypal_enabled,true|nullable|string',
@@ -114,6 +115,7 @@ class BusinessSettingController extends Controller
                 'khqr_enabled',
                 'khqr_merchant_name',
                 'khqr_merchant_account',
+                'khqr_api_token',
                 'paypal_enabled',
                 'paypal_client_id',
                 'paypal_sandbox',
@@ -164,6 +166,7 @@ class BusinessSettingController extends Controller
                 'khqr_enabled',
                 'khqr_merchant_name',
                 'khqr_merchant_account',
+                'khqr_api_token',
                 'paypal_enabled',
                 'paypal_client_id',
                 'paypal_sandbox',
