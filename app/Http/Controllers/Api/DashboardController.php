@@ -145,9 +145,25 @@ class DashboardController extends Controller
             });
         }
 
+        // Get total customers
         $totalCustomers = $customersQuery->count();
-        $activeCustomers = $customersQuery->where('is_active', true)->count();
-        $inactiveCustomers = $totalCustomers - $activeCustomers;
+
+        // Define activity thresholds (customizable)
+        $onlineThreshold = 1; // minutes for "online"
+        $recentThreshold = 5; // minutes for "recently active"
+        $inactiveThreshold = 30; // days for "inactive"
+
+        // Get active customers (online in last 1 minute)
+        $activeCustomers = $customersQuery->where('last_seen_at', '>=', now()->subMinutes($onlineThreshold))->count();
+
+        // Get recently active customers (active in last 5 minutes)
+        $recentlyActiveCustomers = $customersQuery->where('last_seen_at', '>=', now()->subMinutes($recentThreshold))->count();
+
+        // Get inactive customers (no activity in last 30 days)
+        $inactiveCustomers = $customersQuery->where(function($q) use ($inactiveThreshold) {
+            $q->whereNull('last_seen_at')
+            ->orWhere('last_seen_at', '<=', now()->subDays($inactiveThreshold));
+        })->count();
 
         $stats = [
             'revenue' => [
@@ -177,7 +193,10 @@ class DashboardController extends Controller
             'customers' => [
                 'total' => $totalCustomers,
                 'active' => $activeCustomers,
+                'recently_active' => $recentlyActiveCustomers,
                 'inactive' => $inactiveCustomers,
+                'online' => $activeCustomers, // alias for active
+                'offline' => $totalCustomers - $activeCustomers,
             ],
         ];
 
@@ -559,5 +578,128 @@ class DashboardController extends Controller
             'start' => $start,
             'end' => $end
         ];
+    }
+
+    public function customerActivityStats(Request $request)
+    {
+        $user = $request->user();
+        $timeframe = $request->get('timeframe', 'day'); // day, week, month
+
+        // Define time ranges
+        $now = Carbon::now();
+        $ranges = [];
+
+        switch ($timeframe) {
+            case 'hour':
+                for ($i = 23; $i >= 0; $i--) {
+                    $hour = $now->copy()->subHours($i);
+                    $ranges[] = [
+                        'start' => $hour->copy()->startOfHour(),
+                        'end' => $hour->copy()->endOfHour(),
+                        'label' => $hour->format('H:00')
+                    ];
+                }
+                break;
+            case 'week':
+                for ($i = 6; $i >= 0; $i--) {
+                    $day = $now->copy()->subDays($i);
+                    $ranges[] = [
+                        'start' => $day->copy()->startOfDay(),
+                        'end' => $day->copy()->endOfDay(),
+                        'label' => $day->format('D')
+                    ];
+                }
+                break;
+            case 'month':
+            default:
+                for ($i = 29; $i >= 0; $i--) {
+                    $day = $now->copy()->subDays($i);
+                    $ranges[] = [
+                        'start' => $day->copy()->startOfDay(),
+                        'end' => $day->copy()->endOfDay(),
+                        'label' => $day->format('M d')
+                    ];
+                }
+                break;
+        }
+
+        $activityData = [];
+
+        foreach ($ranges as $range) {
+            $query = User::where('role_id', 2)
+                ->whereBetween('last_seen_at', [$range['start'], $range['end']]);
+
+            if ($user->isVendor()) {
+                $query->whereHas('orders.items.product', function($q) use ($user) {
+                    $q->where('vendor_id', $user->id);
+                });
+            }
+
+            $activeCount = $query->count();
+
+            $activityData[] = [
+                'time' => $range['label'],
+                'active_users' => $activeCount,
+                'new_users' => User::where('role_id', 2)
+                    ->whereBetween('created_at', [$range['start'], $range['end']])
+                    ->when($user->isVendor(), function($q) use ($user) {
+                        $q->whereHas('orders.items.product', function($pq) use ($user) {
+                            $pq->where('vendor_id', $user->id);
+                        });
+                    })
+                    ->count()
+            ];
+        }
+
+        // Get user activity distribution
+        $activityDistribution = [
+            'online' => User::where('role_id', 2)
+                ->where('last_seen_at', '>=', now()->subMinutes(5))
+                ->when($user->isVendor(), function($q) use ($user) {
+                    $q->whereHas('orders.items.product', function($pq) use ($user) {
+                        $pq->where('vendor_id', $user->id);
+                    });
+                })
+                ->count(),
+            'idle' => User::where('role_id', 2)
+                ->whereBetween('last_seen_at', [now()->subHours(1), now()->subMinutes(5)])
+                ->when($user->isVendor(), function($q) use ($user) {
+                    $q->whereHas('orders.items.product', function($pq) use ($user) {
+                        $pq->where('vendor_id', $user->id);
+                    });
+                })
+                ->count(),
+            'away' => User::where('role_id', 2)
+                ->whereBetween('last_seen_at', [now()->subDays(1), now()->subHours(1)])
+                ->when($user->isVendor(), function($q) use ($user) {
+                    $q->whereHas('orders.items.product', function($pq) use ($user) {
+                        $pq->where('vendor_id', $user->id);
+                    });
+                })
+                ->count(),
+            'offline' => User::where('role_id', 2)
+                ->where(function($q) {
+                    $q->whereNull('last_seen_at')
+                    ->orWhere('last_seen_at', '<', now()->subDays(1));
+                })
+                ->when($user->isVendor(), function($q) use ($user) {
+                    $q->whereHas('orders.items.product', function($pq) use ($user) {
+                        $pq->where('vendor_id', $user->id);
+                    });
+                })
+                ->count()
+        ];
+
+        return response()->json([
+            'activity_timeline' => $activityData,
+            'activity_distribution' => $activityDistribution,
+            'peak_activity' => [
+                'time' => collect($activityData)->max('active_users') > 0
+                    ? collect($activityData)->where('active_users', collect($activityData)->max('active_users'))->first()['time']
+                    : null,
+                'users' => collect($activityData)->max('active_users')
+            ],
+            'timeframe' => $timeframe
+        ]);
     }
 }

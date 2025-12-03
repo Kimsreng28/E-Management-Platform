@@ -160,12 +160,6 @@ Route::middleware(['auth:sanctum', 'role:admin'])->group(function () {
     Route::delete('orders/{order}', [OrderController::class, 'deleteOrder']);
     Route::put('orders/{order}/update-addresses', [OrderController::class, 'updateOrderAddresses']);
 
-    // Coupon routes
-    Route::get('coupons', [CouponController::class, 'getAllCoupons']);
-    Route::post('coupons', [CouponController::class, 'createCoupon']);
-    Route::put('coupons/{code}', [CouponController::class, 'updateCoupon']);
-    Route::delete('coupons/{code}', [CouponController::class, 'deleteCoupon']);
-
     // User role management
     Route::post('/users/{user}/assign-role', [AdminController::class, 'assignRole']);
     Route::get('/permissions', [AdminController::class, 'getPermissions']);
@@ -385,8 +379,16 @@ Route::middleware('auth:sanctum')->group(function () {
     // Conversation routes for delivery communication
     Route::post('/deliveries/{delivery}/start-conversation', [ConversationController::class, 'startDeliveryConversation']);
 
+    // Coupon routes
+    Route::get('coupons', [CouponController::class, 'getAllCoupons']);
+    Route::post('coupons', [CouponController::class, 'createCoupon']);
+    Route::put('coupons/{code}', [CouponController::class, 'updateCoupon']);
+    Route::delete('coupons/{code}', [CouponController::class, 'deleteCoupon']);
+
     Route::post('/users/online-status', [UserController::class, 'getOnlineStatus']);
     Route::post('/users/update-activity', [UserController::class, 'updateActivity']);
+
+    Route::get('/dashboard/customer-activity', [DashboardController::class, 'customerActivityStats']);
 });
 
 // Broadcast::routes([

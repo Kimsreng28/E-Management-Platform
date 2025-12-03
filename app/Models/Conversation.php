@@ -41,14 +41,13 @@ class Conversation extends Model
 
     public function markAsRead($userId)
     {
-        $this->messages()->where('user_id', '!=', $userId)
+        // Mark all messages from other users as read
+        $this->messages()
+            ->where('user_id', '!=', $userId)
             ->whereNull('read_at')
             ->update(['read_at' => now()]);
 
-        // Also update the participant's last_read timestamp
-        $this->participants()->updateExistingPivot($userId, [
-            'last_read' => now()
-        ]);
+        return $this;
     }
 
     public function latestMessage()

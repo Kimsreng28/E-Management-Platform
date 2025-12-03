@@ -305,13 +305,28 @@ class ChatController extends Controller
         try {
             $this->authorize('view', $conversation);
 
-            $conversation->markAsRead(Auth::id());
+            $userId = Auth::id();
+            $conversation->markAsRead($userId);
 
-            // Broadcast that messages were read
-            broadcast(new MessageRead($conversation->id, Auth::id()));
+            // Get updated unread count
+            $unreadCount = $conversation->messages()
+                ->where('user_id', '!=', $userId)
+                ->whereNull('read_at')
+                ->count();
+
+            // Broadcast multiple events for better real-time updates
+            broadcast(new MessageRead($conversation->id, $userId));
+
+            // Broadcast specific unread count update
+            broadcast(new \App\Events\UnreadCountUpdated(
+                $conversation->id,
+                $unreadCount,
+                $userId
+            ));
 
             return response()->json([
-                'status' => 'Messages marked as read'
+                'status' => 'Messages marked as read',
+                'unread_count' => $unreadCount
             ]);
         } catch (\Exception $e) {
             Log::error('Error marking as read: ' . $e->getMessage());
