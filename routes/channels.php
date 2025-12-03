@@ -17,6 +17,11 @@ Broadcast::channel('user.notifications.{notifiable_id}', function ($user, $notif
     return $user && (int) $user->id === (int) $notifiable_id;
 });
 
+Broadcast::channel('user.presence.{userId}', function ($user, $userId) {
+    // Allow user to listen to their own presence channel
+    return (int) $user->id === (int) $userId;
+});
+
 // Conversation channel
 Broadcast::channel('chat.{conversationId}', function ($user, $conversationId) {
     $conversation = \App\Models\Conversation::find($conversationId);
@@ -31,6 +36,8 @@ Broadcast::channel('chat.{conversationId}', function ($user, $conversationId) {
             'id' => $user->id,
             'name' => $user->name,
             'avatar' => $user->avatar,
+            'is_online' => $user->isOnline(), // Add the user's online status
+            'last_seen' => $user->last_seen_at?->toISOString(), // Add the last seen time
         ];
     }
 

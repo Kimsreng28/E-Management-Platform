@@ -40,6 +40,7 @@ use App\Models\Order;
 use App\Http\Controllers\Api\ContactController;
 use App\Http\Controllers\Api\EmailVerificationController;
 use App\Http\Controllers\Api\AdminController;
+use App\Http\Controllers\Api\UserController;
 
 // Public Route (accessible without login or authentication)
 
@@ -383,6 +384,9 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Conversation routes for delivery communication
     Route::post('/deliveries/{delivery}/start-conversation', [ConversationController::class, 'startDeliveryConversation']);
+
+    Route::post('/users/online-status', [UserController::class, 'getOnlineStatus']);
+    Route::post('/users/update-activity', [UserController::class, 'updateActivity']);
 });
 
 // Broadcast::routes([

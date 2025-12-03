@@ -9,7 +9,11 @@ class UserActivityLog extends Model
 {
     use HasFactory;
 
-    protected $fillable = ['user_id', 'last_seen'];
+    protected $fillable = ['user_id', 'last_seen', 'status'];
+
+    protected $casts = [
+        'last_seen' => 'datetime',
+    ];
 
     public function user()
     {

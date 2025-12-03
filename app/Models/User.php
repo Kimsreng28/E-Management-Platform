@@ -39,12 +39,14 @@ class User extends Authenticatable implements MustVerifyEmail
         'two_factor_secret',
         'two_factor_recovery_codes',
         'is_active',
+        'last_seen_at'
     ];
 
     protected $casts = [
         'two_factor_enabled' => 'boolean',
         'two_factor_recovery_codes' => 'array',
         'is_active' => 'boolean',
+        'last_seen_at' => 'datetime'
     ];
 
     /**
@@ -275,6 +277,48 @@ class User extends Authenticatable implements MustVerifyEmail
         return $this->role->permissions()->whereIn('name', (array)$permissions)->count() === count((array)$permissions);
     }
 
+    // Update Last Seen
+    public function updateLastSeen()
+    {
+        $this->last_seen_at = now();
+        $this->save();
+
+        // Broadcast presence update
+        broadcast(new \App\Events\UserPresenceUpdated($this->id, true))->toOthers();
+    }
+
+    // Mark as offline
+    public function markAsOffline()
+    {
+        // We don't set last_seen_at to null, we keep the last seen time
+        // Broadcast offline status
+        broadcast(new \App\Events\UserPresenceUpdated($this->id, false))->toOthers();
+    }
+
+    // Is online
+    public function isOnline()
+    {
+        if (!$this->last_seen_at) {
+            return false;
+        }
+
+        // Consider user online if they were active in the last 1 minutes
+        return $this->last_seen_at->greaterThan(now()->subMinutes(1));
+    }
+
+    // Get last Seen for human
+    public function getLastSeenForHumans()
+    {
+        if (!$this->last_seen_at) {
+            return 'Never';
+        }
+
+        if ($this->isOnline()) {
+            return 'Online';
+        }
+
+        return $this->last_seen_at->diffForHumans();
+    }
 
     // public function markEmailAsVerified(): bool
     // {
