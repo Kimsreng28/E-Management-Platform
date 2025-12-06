@@ -2,37 +2,67 @@
 
 namespace App\Events;
 
+use App\Models\Delivery;
 use Illuminate\Broadcasting\Channel;
-use Illuminate\Broadcasting\InteractsWithSockets;
-use Illuminate\Broadcasting\PresenceChannel;
 use Illuminate\Broadcasting\PrivateChannel;
+use Illuminate\Broadcasting\PresenceChannel;
 use Illuminate\Contracts\Broadcasting\ShouldBroadcast;
 use Illuminate\Foundation\Events\Dispatchable;
 use Illuminate\Queue\SerializesModels;
-use App\Models\Delivery;
 
 class DeliveryAgentLocationUpdated implements ShouldBroadcast
 {
-    use Dispatchable, InteractsWithSockets, SerializesModels;
+    use Dispatchable, SerializesModels;
 
-    public $delivery;
+    public $delivery_id;
     public $lat;
     public $lng;
+    public $user_id;
+    public $timestamp;
 
+    /**
+     * Create a new event instance.
+     */
     public function __construct(Delivery $delivery, $lat, $lng)
     {
-        $this->delivery = $delivery;
+        $this->delivery_id = $delivery->id;
         $this->lat = $lat;
         $this->lng = $lng;
+        $this->user_id = $delivery->delivery_agent_id;
+        $this->timestamp = now()->toISOString();
     }
 
-    public function broadcastOn()
+    /**
+     * Get the channels the event should broadcast on.
+     */
+    public function broadcastOn(): array
     {
-        // Notify customer and admin for real-time tracking
+        // Broadcast to both the delivery channel AND the agent's private channel
         return [
-            new PrivateChannel('delivery.location.' . $this->delivery->id),
-            new PrivateChannel('user.' . $this->delivery->order->user_id),
-            new Channel('admin.deliveries')
+            new PrivateChannel('delivery.' . $this->delivery_id),
+            new PrivateChannel('user.' . $this->user_id),
+        ];
+    }
+
+    /**
+     * The event's broadcast name.
+     */
+    public function broadcastAs(): string
+    {
+        return 'delivery.location.updated';
+    }
+
+    /**
+     * Get the data to broadcast.
+     */
+    public function broadcastWith(): array
+    {
+        return [
+            'delivery_id' => $this->delivery_id,
+            'lat' => $this->lat,
+            'lng' => $this->lng,
+            'timestamp' => $this->timestamp,
+            'agent_id' => $this->user_id
         ];
     }
 }

@@ -39,14 +39,20 @@ class User extends Authenticatable implements MustVerifyEmail
         'two_factor_secret',
         'two_factor_recovery_codes',
         'is_active',
-        'last_seen_at'
+        'last_seen_at',
+        'delivery_stats',
+        'last_lat',
+        'last_lng',
+        'last_location_at',
     ];
 
     protected $casts = [
         'two_factor_enabled' => 'boolean',
         'two_factor_recovery_codes' => 'array',
         'is_active' => 'boolean',
-        'last_seen_at' => 'datetime'
+        'last_seen_at' => 'datetime',
+        'delivery_stats' => 'array',
+        'last_location_at' => 'datetime'
     ];
 
     /**
@@ -318,6 +324,23 @@ class User extends Authenticatable implements MustVerifyEmail
         }
 
         return $this->last_seen_at->diffForHumans();
+    }
+
+    public function updateDeliveryStats()
+    {
+        if ($this->role_id !== 5) return; // Only for delivery agents
+
+        $stats = Delivery::where('delivery_agent_id', $this->id)
+            ->whereNotNull('agent_rating')
+            ->selectRaw('COUNT(*) as total_ratings, AVG(agent_rating) as average_rating')
+            ->first();
+
+        $this->delivery_stats = [
+            'total_ratings' => $stats->total_ratings ?? 0,
+            'average_rating' => $stats->average_rating ? round($stats->average_rating, 1) : 0,
+        ];
+
+        $this->save();
     }
 
     // public function markEmailAsVerified(): bool

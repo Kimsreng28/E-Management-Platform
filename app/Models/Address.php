@@ -19,7 +19,9 @@ class Address extends Model
         'state',
         'postal_code',
         'country',
-        'is_default'
+        'is_default',
+        'latitude',
+        'longitude',
     ];
 
     protected $casts = [

@@ -38,10 +38,33 @@ class AddressController extends Controller
             'postal_code' => ['required', 'string', 'max:20'],
             'country' => ['sometimes', 'string', 'max:255'],
             'is_default' => ['sometimes', 'boolean'],
+            'latitude' => ['nullable', 'numeric', 'between:-90,90'],
+            'longitude' => ['nullable', 'numeric', 'between:-180,180'],
         ]);
 
         if ($request->input('is_default', false)) {
             $user->addresses()->update(['is_default' => false]);
+        }
+
+        if (empty($validated['latitude']) || empty($validated['longitude'])) {
+            $coordinates = $this->geocodeAddress(
+                $validated['address_line_1'],
+                $validated['address_line_2'] ?? '',
+                $validated['city'],
+                $validated['state'],
+                $validated['postal_code'],
+                $validated['country'] ?? 'Cambodia'
+            );
+
+            if ($coordinates) {
+                $validated['latitude'] = $coordinates['lat'];
+                $validated['longitude'] = $coordinates['lng'];
+            } else {
+                // Use fallback coordinates for the city
+                $fallbackCoords = $this->getMockCoordinates($validated['city']);
+                $validated['latitude'] = $fallbackCoords['lat'];
+                $validated['longitude'] = $fallbackCoords['lng'];
+            }
         }
 
         $address = $user->addresses()->create($validated);
@@ -90,6 +113,8 @@ class AddressController extends Controller
             'postal_code' => ['sometimes', 'string', 'max:20'],
             'country' => ['sometimes', 'string', 'max:255'],
             'is_default' => ['sometimes', 'boolean'],
+            'latitude' => ['sometimes', 'numeric'],
+            'longitude' => ['sometimes', 'numeric'],
         ]);
 
         // If setting as default, unset other defaults for the user
@@ -97,6 +122,24 @@ class AddressController extends Controller
             $address->user->addresses()
                 ->where('id', '!=', $address->id)
                 ->update(['is_default' => false]);
+        }
+
+        $addressChanged = $this->checkIfAddressChanged($address, $validated);
+
+        if ($addressChanged && (empty($validated['latitude']) || empty($validated['longitude']))) {
+            $coordinates = $this->geocodeAddress(
+                $validated['address_line_1'] ?? $address->address_line_1,
+                $validated['address_line_2'] ?? $address->address_line_2,
+                $validated['city'] ?? $address->city,
+                $validated['state'] ?? $address->state,
+                $validated['postal_code'] ?? $address->postal_code,
+                $validated['country'] ?? $address->country ?? 'Cambodia'
+            );
+
+            if ($coordinates) {
+                $validated['latitude'] = $coordinates['lat'];
+                $validated['longitude'] = $coordinates['lng'];
+            }
         }
 
         $address->update($validated);
@@ -145,6 +188,32 @@ class AddressController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Address set as default successfully',
+            'data' => $address
+        ]);
+    }
+
+    public function updateCoordinates(Request $request, Address $address)
+    {
+        if ($address->user_id !== Auth::id()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthorized'
+            ], 403);
+        }
+
+        $request->validate([
+            'latitude' => ['required', 'numeric', 'between:-90,90'],
+            'longitude' => ['required', 'numeric', 'between:-180,180'],
+        ]);
+
+        $address->update([
+            'latitude' => $request->latitude,
+            'longitude' => $request->longitude,
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Coordinates updated successfully',
             'data' => $address
         ]);
     }

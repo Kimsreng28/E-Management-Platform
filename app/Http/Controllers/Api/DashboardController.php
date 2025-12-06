@@ -33,6 +33,26 @@ class DashboardController extends Controller
         return $query;
     }
 
+    // Helper method to apply delivery filter to orders
+    private function applyDeliveryOrderFilter($query, $user)
+    {
+        if ($user->isDelivery()) {
+            $query->whereHas('deliveries', function ($q) use ($user) {
+                $q->where('delivery_agent_id', $user->id);
+            });
+        }
+        return $query;
+    }
+
+    // Helper method to apply delivery filter to deliveries
+    private function applyDeliveryDeliveryFilter($query, $user)
+    {
+        if ($user->isDelivery()) {
+            $query->where('delivery_agent_id', $user->id);
+        }
+        return $query;
+    }
+
     public function stats(Request $request)
     {
         $user = $request->user();

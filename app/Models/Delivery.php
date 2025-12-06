@@ -26,7 +26,9 @@ class Delivery extends Model
         'agent_lng',
         'estimated_arrival_time',
         'customer_accepted_at',
-        'delivery_options'
+        'delivery_options',
+        'agent_rating' => 'decimal:1',
+        'agent_rating_comment' => 'string',
     ];
 
     protected $casts = [

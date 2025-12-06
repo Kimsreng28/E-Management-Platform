@@ -28,7 +28,6 @@ class DeliveryAssigned implements ShouldBroadcast
         return [
             new PrivateChannel('user.' . $this->delivery->order->user_id),
             new PrivateChannel('user.' . $this->delivery->delivery_agent_id),
-            new Channel('admin.deliveries')
         ];
     }
 

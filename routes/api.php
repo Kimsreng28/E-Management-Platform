@@ -204,6 +204,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::put('/addresses/{address}', [AddressController::class, 'updateAddress']);
     Route::delete('/addresses/{address}', [AddressController::class, 'deleteAddress']);
     Route::post('/addresses/{address}/set-default', [AddressController::class, 'setDefaultAddress']);
+    Route::put('addresses/{address}/coordinates', [AddressController::class, 'updateCoordinates']);
 
     // Profile routes
     Route::prefix('profile')->group(function () {
@@ -218,7 +219,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('orders/preview', [OrderController::class, 'previewOrder']);
     Route::put('orders/{order}', [OrderController::class, 'updateOrderStatus']);
     Route::post('orders/{order}/complete', [OrderController::class, 'completeOrder']);
-
+    Route::get('orders/stats', [OrderController::class, 'getOrderStats']);
 
     // Wishlist products
     Route::get('wishlist', [WishlistController::class, 'index']);
@@ -376,8 +377,22 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/deliveries/active', [DeliveryController::class, 'getActiveDeliveries']);
     Route::get('/deliveries/{id}', [DeliveryController::class, 'getDeliveryById']);
 
+    Route::post('/deliveries/{delivery}/update-location', [DeliveryController::class, 'updateLocation']);
+
+    Route::get('/deliveries/{delivery}/route', [DeliveryController::class, 'getDeliveryRoute']);
+    Route::get('/deliveries/map/active', [DeliveryController::class, 'getActiveDeliveriesMap']);
+    Route::get('/delivery-agent/map/deliveries', [DeliveryController::class, 'getAgentDeliveriesMap']);
+
+    Route::get('/dashboard/delivery-stats', [DashboardController::class, 'deliveryStats']);
+    Route::get('/delivery-agent/dashboard/deliveries', [DeliveryController::class, 'getAgentDashboardDeliveries']);
+
     // Conversation routes for delivery communication
     Route::post('/deliveries/{delivery}/start-conversation', [ConversationController::class, 'startDeliveryConversation']);
+
+    Route::get('/delivery-agent/delivery-history', [DeliveryController::class, 'getAgentDeliveryHistory']);
+
+    Route::post('/deliveries/{delivery}/rate-agent', [DeliveryController::class, 'rateDeliveryAgent']);
+    Route::post('/delivery-agent/update-initial-location', [DeliveryController::class, 'updateInitialLocation']);
 
     // Coupon routes
     Route::get('coupons', [CouponController::class, 'getAllCoupons']);

@@ -101,12 +101,18 @@ class OrderController extends Controller
         $user = $request->user();
 
         // Start with base query
-        $query = Order::with(['items.product.images', 'user', 'payments']);
+        $query = Order::with(['items.product.images', 'user', 'payments', 'delivery']);
 
         // If user is a vendor, only show orders containing their products
         if ($user->isVendor()) {
             $query->whereHas('items.product', function ($q) use ($user) {
                 $q->where('vendor_id', $user->id);
+            });
+        }
+        // If user is an delivery, only show orders assigned to them
+        elseif ($user->isDelivery()) { // You'll need to add this method to User model
+            $query->whereHas('delivery', function ($q) use ($user) {
+                $q->where('delivery_agent_id', $user->id);
             });
         }
         // If user is a customer, only show their own orders
@@ -376,7 +382,7 @@ class OrderController extends Controller
     public function showOrder(Order $order)
     {
         // Load all necessary relationships at once
-        $orderData = $order->load(['items.product.images', 'payments', 'shippingAddress', 'billingAddress', 'user']);
+        $orderData = $order->load(['items.product.images', 'payments', 'shippingAddress', 'billingAddress', 'user', 'delivery']);
 
         return response()->json($orderData);
     }
@@ -516,15 +522,112 @@ class OrderController extends Controller
     }
 
     // Order Stats
-    public function getOrderStats()
+    public function getOrderStats(Request $request)
     {
-        $stats = [
-            'total' => Order::count(),
-            'pending' => Order::where('status', 'pending')->count(),
-            'processing' => Order::where('status', 'processing')->count(),
-            'shipped' => Order::where('status', 'shipped')->count(),
-            'completed' => Order::where('status', 'completed')->count(),
-        ];
+        $user = $request->user();
+        $stats = [];
+
+        if ($user->isAdmin()) {
+            // Admin sees all stats
+            $stats = [
+                'total' => Order::count(),
+                'pending' => Order::where('status', 'pending')->count(),
+                'processing' => Order::where('status', 'processing')->count(),
+                'shipped' => Order::where('status', 'shipped')->count(),
+                'completed' => Order::where('status', 'completed')->count(),
+                'cancelled' => Order::where('status', 'cancelled')->count(),
+                'refunded' => Order::where('status', 'refunded')->count(),
+                // Delivery specific stats for admin
+                'awaiting_delivery' => Order::where('status', 'processing')->orWhere('status', 'shipped')->count(),
+                'in_delivery' => Order::whereHas('delivery', function($q) {
+                    $q->where('status', 'in_transit')->orWhere('status', 'picked_up');
+                })->count(),
+                'delivered' => Order::whereHas('delivery', function($q) {
+                    $q->where('status', 'delivered');
+                })->count(),
+            ];
+        } elseif ($user->isVendor()) {
+            // Vendor only sees stats for their products
+            $vendorOrders = Order::whereHas('items.product', function($q) use ($user) {
+                $q->where('vendor_id', $user->id);
+            });
+
+            $stats = [
+                'total' => $vendorOrders->count(),
+                'pending' => $vendorOrders->clone()->where('status', 'pending')->count(),
+                'processing' => $vendorOrders->clone()->where('status', 'processing')->count(),
+                'shipped' => $vendorOrders->clone()->where('status', 'shipped')->count(),
+                'completed' => $vendorOrders->clone()->where('status', 'completed')->count(),
+                'cancelled' => $vendorOrders->clone()->where('status', 'cancelled')->count(),
+                'refunded' => $vendorOrders->clone()->where('status', 'refunded')->count(),
+            ];
+        } elseif ($user->isDelivery()) {
+            // Delivery agent only sees stats for orders assigned to them
+            $deliveryOrders = Order::whereHas('delivery', function($q) use ($user) {
+                $q->where('delivery_agent_id', $user->id);
+            });
+
+            // Get delivery-specific stats
+            $deliveryStats = [
+                'total' => $deliveryOrders->count(),
+                'assigned' => $deliveryOrders->clone()
+                    ->whereHas('delivery', function($q) {
+                        $q->where('status', 'assigned');
+                    })->count(),
+                'picked_up' => $deliveryOrders->clone()
+                    ->whereHas('delivery', function($q) {
+                        $q->where('status', 'picked_up');
+                    })->count(),
+                'in_transit' => $deliveryOrders->clone()
+                    ->whereHas('delivery', function($q) {
+                        $q->where('status', 'in_transit');
+                    })->count(),
+                'delivered' => $deliveryOrders->clone()
+                    ->whereHas('delivery', function($q) {
+                        $q->where('status', 'delivered');
+                    })->count(),
+                'failed' => $deliveryOrders->clone()
+                    ->whereHas('delivery', function($q) {
+                        $q->where('status', 'failed');
+                    })->count(),
+                'pending' => $deliveryOrders->clone()->where('status', 'pending')->count(),
+                'processing' => $deliveryOrders->clone()->where('status', 'processing')->count(),
+                'shipped' => $deliveryOrders->clone()->where('status', 'shipped')->count(),
+                'completed' => $deliveryOrders->clone()->where('status', 'completed')->count(),
+            ];
+
+            // Also get today's delivery stats for dashboard
+            $today = now()->startOfDay();
+            $todayDeliveries = Order::whereHas('delivery', function($q) use ($user) {
+                $q->where('delivery_agent_id', $user->id)
+                ->whereDate('created_at', '>=', now()->startOfDay());
+            });
+
+            $stats = array_merge($deliveryStats, [
+                'today_total' => $todayDeliveries->count(),
+                'today_delivered' => $todayDeliveries->clone()
+                    ->whereHas('delivery', function($q) {
+                        $q->where('status', 'delivered');
+                    })->count(),
+                'today_pending' => $todayDeliveries->clone()
+                    ->whereHas('delivery', function($q) {
+                        $q->where('status', 'assigned')->orWhere('status', 'picked_up');
+                    })->count(),
+            ]);
+        } else {
+            // Customer sees only their own order stats
+            $customerOrders = Order::where('user_id', $user->id);
+
+            $stats = [
+                'total' => $customerOrders->count(),
+                'pending' => $customerOrders->clone()->where('status', 'pending')->count(),
+                'processing' => $customerOrders->clone()->where('status', 'processing')->count(),
+                'shipped' => $customerOrders->clone()->where('status', 'shipped')->count(),
+                'completed' => $customerOrders->clone()->where('status', 'completed')->count(),
+                'cancelled' => $customerOrders->clone()->where('status', 'cancelled')->count(),
+                'refunded' => $customerOrders->clone()->where('status', 'refunded')->count(),
+            ];
+        }
 
         return response()->json($stats);
     }

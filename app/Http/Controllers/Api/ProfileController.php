@@ -6,61 +6,47 @@ use Illuminate\Routing\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Facades\Cache;
 use App\Models\User;
 use App\Models\UserProfile;
 use App\Models\Address;
 
 class ProfileController extends Controller
 {
-    // Cache durations in seconds
-    private $cacheDurations = [
-        'profile_data' => 1800, // 30 minutes
-    ];
-
-    // Clear profile caches
-    private function clearProfileCaches($userId)
-    {
-        Cache::forget("profile:{$userId}");
-    }
-
     // Get user profile data
     public function show(Request $request)
     {
         $user = $request->user();
-        $cacheKey = "profile:{$user->id}";
+        $profile = $user->profile ?? new UserProfile();
+        $defaultAddress = $user->addresses()->where('is_default', true)->first();
 
-        $profileData = Cache::remember($cacheKey, $this->cacheDurations['profile_data'], function () use ($user) {
-            $profile = $user->profile ?? new UserProfile();
-            $defaultAddress = $user->addresses()->where('is_default', true)->first();
-
-            return [
-                'user' => [
-                    'name' => $user->name,
-                    'email' => $user->email,
-                    'phone' => $user->phone,
-                    'avatar' => $user->avatar,
-                ],
-                'profile' => [
-                    'bio' => $profile->bio,
-                    'birth_date' => $profile->birth_date,
-                    'gender' => $profile->gender,
-                    'website' => $profile->website,
-                    'social_links' => $profile->social_links,
-                ],
-                'address' => $defaultAddress ? [
-                    'label' => $defaultAddress->label,
-                    'recipient_name' => $defaultAddress->recipient_name,
-                    'phone' => $defaultAddress->phone,
-                    'address_line_1' => $defaultAddress->address_line_1,
-                    'address_line_2' => $defaultAddress->address_line_2,
-                    'city' => $defaultAddress->city,
-                    'state' => $defaultAddress->state,
-                    'postal_code' => $defaultAddress->postal_code,
-                    'country' => $defaultAddress->country,
-                ] : null
-            ];
-        });
+        $profileData = [
+            'user' => [
+                'name' => $user->name,
+                'email' => $user->email,
+                'phone' => $user->phone,
+                'avatar' => $user->avatar,
+            ],
+            'profile' => [
+                'bio' => $profile->bio,
+                'birth_date' => $profile->birth_date,
+                'gender' => $profile->gender,
+                'website' => $profile->website,
+                'social_links' => $profile->social_links,
+            ],
+            'address' => $defaultAddress ? [
+                'label' => $defaultAddress->label,
+                'recipient_name' => $defaultAddress->recipient_name,
+                'phone' => $defaultAddress->phone,
+                'address_line_1' => $defaultAddress->address_line_1,
+                'address_line_2' => $defaultAddress->address_line_2,
+                'city' => $defaultAddress->city,
+                'state' => $defaultAddress->state,
+                'postal_code' => $defaultAddress->postal_code,
+                'country' => $defaultAddress->country,
+                'latitude' => $defaultAddress->latitude,
+                'longitude' => $defaultAddress->longitude,
+            ] : null
+        ];
 
         return response()->json($profileData);
     }
@@ -92,6 +78,8 @@ class ProfileController extends Controller
             'address.state' => 'nullable|string|max:100',
             'address.postal_code' => 'nullable|string|max:20',
             'address.country' => 'nullable|string|max:100',
+            'address.latitude' => 'nullable|numeric|between:-90,90',
+            'address.longitude' => 'nullable|numeric|between:-180,180',
         ]);
 
         if ($validator->fails()) {
@@ -131,9 +119,6 @@ class ProfileController extends Controller
                 $addressData
             );
         }
-
-        // Clear profile cache after update
-        $this->clearProfileCaches($user->id);
 
         return response()->json([
             'message' => 'Profile updated successfully',

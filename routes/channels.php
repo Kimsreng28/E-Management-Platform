@@ -44,7 +44,7 @@ Broadcast::channel('chat.{conversationId}', function ($user, $conversationId) {
     return false;
 });
 
-// Delivery channel - allow customer, agent, and admin to access
+// Delivery channel - allow customer, agent
 Broadcast::channel('delivery.{deliveryId}', function ($user, $deliveryId) {
     Log::info('Delivery channel access attempt', [
         'user_id' => $user?->id,
@@ -68,18 +68,29 @@ Broadcast::channel('delivery.{deliveryId}', function ($user, $deliveryId) {
 
     $isCustomer = (int)$user->id === (int)($delivery->order->user_id ?? 0);
     $isAgent = (int)$user->id === (int)($delivery->delivery_agent_id ?? 0);
-    $isAdmin = $user->role_id === 1;
 
     Log::info('Delivery channel auth check', [
         'user_id' => $user->id,
         'delivery_id' => $delivery->id,
         'isCustomer' => $isCustomer,
         'isAgent' => $isAgent,
-        'isAdmin' => $isAdmin,
-        'authorized' => $isCustomer || $isAgent || $isAdmin
+        'authorized' => $isCustomer || $isAgent
     ]);
 
-    return $isCustomer || $isAgent || $isAdmin
+    return $isCustomer || $isAgent
         ? ['id' => $user->id, 'name' => $user->name, 'avatar' => $user->avatar]
         : false;
+});
+
+Broadcast::channel('user.{userId}', function ($user, $userId) {
+    Log::info('User channel access attempt', [
+        'user_id' => $user?->id,
+        'requested_user_id' => $userId,
+        'authorized' => $user && (int)$user->id === (int)$userId
+    ]);
+    
+    return $user && (int)$user->id === (int)$userId ? [
+        'id' => $user->id,
+        'name' => $user->name
+    ] : false;
 });

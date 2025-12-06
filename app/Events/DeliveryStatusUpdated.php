@@ -31,12 +31,11 @@ class DeliveryStatusUpdated implements ShouldBroadcast
 
     public function broadcastOn()
     {
-        // Notify customer, agent, and admin
+        // Notify customer, delivery agent
         return [
             new PrivateChannel('delivery.' . $this->delivery->id),
             new PrivateChannel('user.' . $this->delivery->order->user_id),
-            new PrivateChannel('user.' . $this->delivery->delivery_agent_id),
-            new Channel('admin.deliveries')
+            new PrivateChannel('user.' . $this->delivery->delivery_agent_id)
         ];
     }
 
