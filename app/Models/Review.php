@@ -41,4 +41,9 @@ class Review extends Model
     {
         return $this->hasMany(ReviewReply::class);
     }
+
+    public function media()
+    {
+        return $this->hasMany(ReviewMedia::class)->orderBy('order');
+    }
 }

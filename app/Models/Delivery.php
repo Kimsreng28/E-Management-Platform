@@ -27,8 +27,9 @@ class Delivery extends Model
         'estimated_arrival_time',
         'customer_accepted_at',
         'delivery_options',
-        'agent_rating' => 'decimal:1',
-        'agent_rating_comment' => 'string',
+        'agent_rating',
+        'agent_rating_comment',
+        'agent_rated_at'
     ];
 
     protected $casts = [
@@ -43,6 +44,9 @@ class Delivery extends Model
         'distance' => 'decimal:2',
         'delivery_options' => 'array',
         'received_at' => 'datetime',
+
+        'agent_rating' => 'decimal:2',
+        'agent_rated_at' => 'datetime',
     ];
 
     public function order()

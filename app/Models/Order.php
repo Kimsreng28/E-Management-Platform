@@ -71,6 +71,11 @@ class Order extends Model
         return $this->hasMany(TelegramNotification::class);
     }
 
+    public function reviews()
+    {
+        return $this->hasMany(Review::class, 'order_id');
+    }
+
     protected static function boot()
     {
         parent::boot();

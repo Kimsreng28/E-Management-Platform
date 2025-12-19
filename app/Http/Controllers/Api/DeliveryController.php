@@ -17,6 +17,7 @@ use App\Models\Conversation;
 use App\Events\DeliveryAssigned;
 use Illuminate\Support\Facades\Log;
 use App\Events\ActiveDeliveriesUpdated;
+use App\Models\Review;
 
 class DeliveryController extends Controller
 {
@@ -1045,10 +1046,11 @@ class DeliveryController extends Controller
                 ], 403);
             }
 
-            // Use paginate properly
+            // Load reviews properly through order items
             $deliveries = Delivery::with([
                 'order.user',
-                'order.items.product',
+                'order.items.product', // Load product relationship
+                'order.items.product.reviews',
                 'order.shippingAddress',
             ])
             ->where('delivery_agent_id', $user->id)
@@ -1062,22 +1064,20 @@ class DeliveryController extends Controller
                 $shippingAddress = $delivery->order->shippingAddress ?? null;
                 $customerReviews = [];
 
-                // Get product reviews for this order
+                // Get reviews for each product in the order
                 foreach ($delivery->order->items as $item) {
-                    if ($item->product) {
-                        $reviews = $item->product->reviews()
-                            ->where('order_id', $delivery->order->id)
-                            ->with('user')
-                            ->get();
-
-                        foreach ($reviews as $review) {
-                            $customerReviews[] = [
-                                'product_name' => $item->product_name,
-                                'rating' => $review->rating,
-                                'comment' => $review->comment,
-                                'created_at' => $review->created_at,
-                                'customer_name' => $review->user->name ?? 'Anonymous'
-                            ];
+                    if ($item->product && $item->product->reviews) {
+                        foreach ($item->product->reviews as $review) {
+                            // Check if this review is from the customer of this order
+                            if ($review->user_id === $delivery->order->user_id) {
+                                $customerReviews[] = [
+                                    'product_name' => $item->product_name,
+                                    'rating' => $review->rating,
+                                    'comment' => $review->comment,
+                                    'created_at' => $review->created_at,
+                                    'customer_name' => $review->user->name ?? $customer->name ?? 'Anonymous'
+                                ];
+                            }
                         }
                     }
                 }
@@ -1088,7 +1088,6 @@ class DeliveryController extends Controller
                     'status' => $delivery->status,
                     'delivered_at' => $delivery->delivered_at,
                     'estimated_arrival_time' => $delivery->estimated_arrival_time,
-                    // IMPORTANT: Include agent_rating from the delivery record
                     'agent_rating' => $delivery->agent_rating,
                     'agent_rating_comment' => $delivery->agent_rating_comment,
                     'agent_rated_at' => $delivery->agent_rated_at,

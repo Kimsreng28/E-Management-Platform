@@ -6,13 +6,15 @@ use App\Models\Review;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\DB;
+use App\Models\ReviewMedia;
+use Illuminate\Support\Facades\Log;
 
 class ReviewController extends Controller
 {
     // List all reviews (Admin can filter by approval status)
     public function index(Request $request)
     {
-        $query = Review::with(['user', 'product', 'order', 'replies.user']);
+        $query = Review::with(['user', 'product', 'order', 'replies.user', 'media']);
 
         if ($request->has('is_approved')) {
             $query->where('is_approved', filter_var($request->is_approved, FILTER_VALIDATE_BOOLEAN));
@@ -40,7 +42,7 @@ class ReviewController extends Controller
             ], 403);
         }
 
-        $query = Review::with(['user', 'product', 'order', 'replies.user'])
+        $query = Review::with(['user', 'product', 'order', 'replies.user', 'media'])
             ->whereHas('product', function($q) use ($user) {
                 $q->where('vendor_id', $user->id);
             });
@@ -82,15 +84,67 @@ class ReviewController extends Controller
             'order_id' => 'nullable|exists:orders,id',
             'rating' => 'required|integer|min:1|max:5',
             'comment' => 'required|string',
+            'images' => 'nullable|array|max:3',
+            'images.*' => 'image|mimes:jpeg,png,jpg,gif,webp|max:5120', // 5MB max
+            'video' => 'nullable|file|mimes:mp4,avi,mov,wmv|max:15360', // 15MB max
         ]);
 
         $user = $request->user();
         $validated['user_id'] = $user->id;
         $validated['is_approved'] = false;
 
-        $review = Review::create($validated);
+        DB::beginTransaction();
+        try {
+            $review = Review::create($validated);
 
-        return response()->json(['success' => true, 'review' => $review], 201);
+            // Handle image uploads
+            if ($request->hasFile('images')) {
+                $imageCount = 0;
+                foreach ($request->file('images') as $image) {
+                    if ($imageCount >= 3) break; // Limit to 3 images
+                    
+                    $path = $image->store('reviews/images', 'public');
+                    
+                    ReviewMedia::create([
+                        'review_id' => $review->id,
+                        'path' => $path,
+                        'type' => 'image',
+                        'mime_type' => $image->getMimeType(),
+                        'size' => $image->getSize(),
+                        'order' => $imageCount
+                    ]);
+                    
+                    $imageCount++;
+                }
+            }
+
+            // Handle video upload
+            if ($request->hasFile('video')) {
+                $video = $request->file('video');
+                $path = $video->store('reviews/videos', 'public');
+                
+                ReviewMedia::create([
+                    'review_id' => $review->id,
+                    'path' => $path,
+                    'type' => 'video',
+                    'mime_type' => $video->getMimeType(),
+                    'size' => $video->getSize(),
+                    'order' => $imageCount, // Order after images
+                ]);
+            }
+
+            DB::commit();
+            
+            $review->load(['user', 'media']);
+            return response()->json(['success' => true, 'review' => $review], 201);
+            
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to create review: ' . $e->getMessage()
+            ], 500);
+        }
     }
 
     // Vendor/Admin replies to a review
